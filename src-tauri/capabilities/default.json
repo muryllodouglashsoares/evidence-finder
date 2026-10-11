@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Permissões mínimas da janela principal. A interface só chama os comandos próprios do app; nenhum plugin de arquivos, shell ou HTTP é exposto ao frontend.",
+  "windows": ["main"],
+  "permissions": []
+}
