@@ -1,12 +1,15 @@
 import { formatDateTime } from "../lib/format";
+import { DocumentsPanel } from "../components/DocumentsPanel";
+import type { Notice } from "../components/StatusMessage";
 import type { ProjectInfo } from "../types/contracts";
 
 interface ProjectPageProps {
   project: ProjectInfo;
   onClose: () => void;
+  onNotice: (notice: Notice | null) => void;
 }
 
-export function ProjectPage({ project, onClose }: ProjectPageProps) {
+export function ProjectPage({ project, onClose, onNotice }: ProjectPageProps) {
   return (
     <main className="project">
       <header className="project__header">
@@ -38,15 +41,7 @@ export function ProjectPage({ project, onClose }: ProjectPageProps) {
         </div>
       </dl>
 
-      <section className="empty" aria-labelledby="empty-title">
-        <h2 id="empty-title" className="section-title">
-          Ainda não há material neste projeto
-        </h2>
-        <p className="muted">
-          A importação de arquivos, a extração de texto e a busca serão implementadas nas próximas
-          fases. Nesta fase, o projeto guarda apenas seus metadados.
-        </p>
-      </section>
+      <DocumentsPanel projectId={project.id} onNotice={onNotice} />
     </main>
   );
 }

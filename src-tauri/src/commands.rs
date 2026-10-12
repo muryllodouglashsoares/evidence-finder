@@ -2,7 +2,11 @@
 //! a interface não recebe plugins de sistema de arquivos.
 
 use crate::error::{AppError, ErrorCode};
-use crate::models::{DirectorySelection, PickPurpose, ProjectInfo, RecentProject};
+use crate::documents::{self, ProjectHandle, MAX_DOCUMENTS};
+use crate::models::{
+    DirectorySelection, DocumentInfo, DocumentList, ImportFailure, ImportResult, PickPurpose,
+    PickedFile, PickedFiles, ProjectInfo, RecentProject, RemoveResult, StorageMode,
+};
 use crate::paths;
 use crate::service::{self, OpenedProject};
 use crate::state::AppState;
@@ -19,6 +23,13 @@ fn to_info(opened: &OpenedProject) -> ProjectInfo {
         directory: opened.dir.to_string_lossy().into_owned(),
         created_at: opened.record.created_at.clone(),
         updated_at: opened.record.updated_at.clone(),
+    }
+}
+
+fn handle(opened: &OpenedProject) -> ProjectHandle {
+    ProjectHandle {
+        id: opened.record.id.clone(),
+        dir: opened.dir.clone(),
     }
 }
 
@@ -67,6 +78,7 @@ pub fn create_project(
     let parent = state.authorized.resolve(&directory_token)?;
     let opened = service::create_project(&parent, &name)?;
     let info = to_info(&opened);
+    state.set_current(handle(&opened));
     remember(&state, &info);
     state.authorized.revoke(&directory_token);
     Ok(info)
@@ -80,6 +92,7 @@ pub fn open_project(
     let dir = state.authorized.resolve(&directory_token)?;
     let opened = service::open_project(&dir)?;
     let info = to_info(&opened);
+    state.set_current(handle(&opened));
     remember(&state, &info);
     state.authorized.revoke(&directory_token);
     Ok(info)
@@ -127,6 +140,7 @@ pub fn open_recent_project(
         ));
     }
     let info = to_info(&opened);
+    state.set_current(handle(&opened));
     remember(&state, &info);
     Ok(info)
 }
@@ -135,4 +149,140 @@ pub fn open_recent_project(
 #[tauri::command(async)]
 pub fn forget_recent_project(state: State<'_, AppState>, id: String) -> Result<bool, AppError> {
     state.registry.forget(&id)
+}
+
+// ---------------------------------------------------------------------------
+// Fase 2: documentos do projeto aberto
+// ---------------------------------------------------------------------------
+
+/// Encerra o projeto aberto e descarta arquivos pendentes de importação.
+#[tauri::command]
+pub fn close_project(state: State<'_, AppState>) {
+    state.clear_current();
+}
+
+#[tauri::command(async)]
+pub fn list_documents(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<DocumentList, AppError> {
+    let project = state.current_for(&project_id)?;
+    documents::list_documents(&project)
+}
+
+/// Abre o diálogo nativo para escolher arquivos. A interface recebe apenas
+/// tokens opacos e nomes de arquivo (nunca caminhos).
+#[tauri::command(async)]
+pub fn pick_documents(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<Option<PickedFiles>, AppError> {
+    state.current_for(&project_id)?;
+
+    let Some(picked) = app
+        .dialog()
+        .file()
+        .set_title("Escolha os arquivos a importar")
+        .add_filter("Documentos (PNG, JPEG, TXT, PDF)", &["png", "jpg", "jpeg", "txt", "pdf"])
+        .blocking_pick_files()
+    else {
+        return Ok(None); // usuário cancelou
+    };
+
+    let mut skipped = 0u32;
+    let mut canonical = Vec::new();
+    for file in picked {
+        let resolved = file
+            .into_path()
+            .ok()
+            .and_then(|p| dunce::canonicalize(p).ok())
+            .filter(|p| p.is_file());
+        match resolved {
+            Some(path) if canonical.len() < MAX_DOCUMENTS as usize => canonical.push(path),
+            _ => skipped += 1,
+        }
+    }
+
+    let files = state
+        .pending
+        .replace(canonical)?
+        .into_iter()
+        .map(|(token, path)| PickedFile {
+            token,
+            name: path
+                .file_name()
+                .map(|n| documents::sanitize_display_name(&n.to_string_lossy()))
+                .unwrap_or_default(),
+        })
+        .collect();
+    Ok(Some(PickedFiles { files, skipped }))
+}
+
+#[tauri::command(async)]
+pub fn import_documents(
+    state: State<'_, AppState>,
+    project_id: String,
+    file_tokens: Vec<String>,
+    mode: StorageMode,
+) -> Result<ImportResult, AppError> {
+    let project = state.current_for(&project_id)?;
+    if file_tokens.len() > MAX_DOCUMENTS as usize {
+        return Err(AppError::new(
+            ErrorCode::LimitExceeded,
+            "Muitos arquivos de uma vez. Importe em lotes de até 500 arquivos.",
+        ));
+    }
+    let _guard = state.write_lock.lock().map_err(|_| AppError::internal())?;
+
+    let mut sources = Vec::new();
+    let mut unauthorized = 0usize;
+    for token in &file_tokens {
+        match state.pending.take(token) {
+            Some(path) => sources.push(path),
+            None => unauthorized += 1,
+        }
+    }
+    let mut result = documents::import_files(&project, &sources, mode)?;
+    for _ in 0..unauthorized {
+        result.failed.push(ImportFailure {
+            name: "arquivo".to_string(),
+            code: ErrorCode::DirectoryNotAuthorized,
+            message: "O arquivo não está autorizado nesta sessão. Selecione-o novamente.".to_string(),
+        });
+    }
+    Ok(result)
+}
+
+#[tauri::command(async)]
+pub fn add_text_document(
+    state: State<'_, AppState>,
+    project_id: String,
+    title: String,
+    text: String,
+) -> Result<ImportResult, AppError> {
+    let project = state.current_for(&project_id)?;
+    let _guard = state.write_lock.lock().map_err(|_| AppError::internal())?;
+    documents::add_text(&project, &title, &text)
+}
+
+#[tauri::command(async)]
+pub fn verify_document(
+    state: State<'_, AppState>,
+    project_id: String,
+    document_id: String,
+) -> Result<DocumentInfo, AppError> {
+    let project = state.current_for(&project_id)?;
+    documents::verify_document(&project, &document_id)
+}
+
+#[tauri::command(async)]
+pub fn remove_document(
+    state: State<'_, AppState>,
+    project_id: String,
+    document_id: String,
+) -> Result<RemoveResult, AppError> {
+    let project = state.current_for(&project_id)?;
+    let _guard = state.write_lock.lock().map_err(|_| AppError::internal())?;
+    documents::remove_document(&project, &document_id)
 }

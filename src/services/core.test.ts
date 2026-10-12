@@ -6,7 +6,9 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: (...args: unknown[]) => invokeM
 import { core, CoreError, normalizeError } from "./core";
 
 describe("core service", () => {
-  beforeEach(() => invokeMock.mockReset());
+  beforeEach(() => {
+    invokeMock.mockReset();
+  });
 
   it("envia o token (e nunca um caminho) ao criar um projeto", async () => {
     invokeMock.mockResolvedValue({ id: "1" });
@@ -35,5 +37,25 @@ describe("core service", () => {
     invokeMock.mockResolvedValue(null);
     await expect(core.pickDirectory("projectLocation")).resolves.toBeNull();
     expect(invokeMock).toHaveBeenCalledWith("pick_directory", { purpose: "projectLocation" });
+  });
+
+  it("operações de documentos enviam ids e tokens, nunca caminhos", async () => {
+    invokeMock.mockResolvedValue(null);
+    await core.pickDocuments("p1");
+    await core.importDocuments("p1", ["t1", "t2"], "copy");
+    await core.addTextDocument("p1", "Título", "texto");
+    await core.verifyDocument("p1", "d1");
+    await core.removeDocument("p1", "d1");
+    await core.listDocuments("p1");
+    await core.closeProject();
+    expect(invokeMock.mock.calls).toEqual([
+      ["pick_documents", { projectId: "p1" }],
+      ["import_documents", { projectId: "p1", fileTokens: ["t1", "t2"], mode: "copy" }],
+      ["add_text_document", { projectId: "p1", title: "Título", text: "texto" }],
+      ["verify_document", { projectId: "p1", documentId: "d1" }],
+      ["remove_document", { projectId: "p1", documentId: "d1" }],
+      ["list_documents", { projectId: "p1" }],
+      ["close_project", undefined],
+    ]);
   });
 });

@@ -1,4 +1,4 @@
-//! Núcleo local do Evidence Finder (Fase 1: fundação).
+//! Núcleo local do Evidence Finder (Fase 1: fundação · Fase 2: documentos).
 //!
 //! Tudo ocorre na máquina do usuário: sem rede, sem telemetria, sem serviços
 //! externos. A interface só se comunica com este núcleo pelos comandos de
@@ -7,6 +7,9 @@
 pub mod authorization;
 pub mod commands;
 pub mod db;
+pub mod docformat;
+pub mod docstore;
+pub mod documents;
 pub mod error;
 pub mod models;
 pub mod paths;
@@ -35,6 +38,13 @@ pub fn run() {
             commands::list_recent_projects,
             commands::open_recent_project,
             commands::forget_recent_project,
+            commands::close_project,
+            commands::list_documents,
+            commands::pick_documents,
+            commands::import_documents,
+            commands::add_text_document,
+            commands::verify_document,
+            commands::remove_document,
         ])
         .run(tauri::generate_context!())
         .expect("falha ao iniciar o Evidence Finder");

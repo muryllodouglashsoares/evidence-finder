@@ -5,11 +5,13 @@ interface DialogProps {
   open: boolean;
   title: string;
   onClose: () => void;
+  /** Diálogo mais largo, para listas e textos longos. */
+  wide?: boolean;
   children: ReactNode;
 }
 
 /** Modal baseado em <dialog> nativo: foco, Esc e acessibilidade vêm do navegador. */
-export function Dialog({ open, title, onClose, children }: DialogProps) {
+export function Dialog({ open, title, onClose, wide = false, children }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
@@ -22,7 +24,7 @@ export function Dialog({ open, title, onClose, children }: DialogProps) {
   return (
     <dialog
       ref={ref}
-      className="dialog"
+      className={wide ? "dialog dialog--wide" : "dialog"}
       aria-labelledby="dialog-title"
       onCancel={(event) => {
         // Esc: quem controla o estado decide se fecha (evita fechar durante operações).

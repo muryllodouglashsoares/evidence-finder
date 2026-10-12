@@ -17,7 +17,7 @@ fn invalid(message: impl Into<String>) -> AppError {
     AppError::new(ErrorCode::InvalidName, message)
 }
 
-fn is_invisible_formatting(c: char) -> bool {
+pub(crate) fn is_invisible_formatting(c: char) -> bool {
     matches!(
         c,
         '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{FEFF}'

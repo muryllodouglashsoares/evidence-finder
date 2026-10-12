@@ -19,7 +19,7 @@ export function HomePage(props: HomePageProps) {
   return (
     <main className="home">
       <section className="home__intro" aria-labelledby="app-title">
-        <p className="eyebrow">Fase 1 · Fundação</p>
+        <p className="eyebrow">Fase 2 · Documentos</p>
         <h1 id="app-title" className="home__title">
           Evidence Finder
         </h1>
@@ -50,7 +50,7 @@ export function HomePage(props: HomePageProps) {
           </button>
         </div>
         <p className="muted small">
-          Importação, OCR, busca e exportação ainda não existem: chegam em fases posteriores.
+          Leitura de conteúdo (OCR), busca e exportação ainda não existem: chegam em fases posteriores.
         </p>
       </section>
 
