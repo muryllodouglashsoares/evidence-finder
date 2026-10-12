@@ -45,6 +45,38 @@ impl AuthorizedDirs {
     }
 }
 
+/// Arquivos escolhidos no diálogo nativo e ainda não importados. Mesmo
+/// princípio das pastas: a interface só conhece tokens opacos. Cada nova
+/// seleção substitui a anterior e cada token é consumido uma única vez.
+#[derive(Default)]
+pub struct PendingFiles {
+    inner: Mutex<HashMap<String, PathBuf>>,
+}
+
+impl PendingFiles {
+    pub fn replace(&self, files: Vec<PathBuf>) -> Result<Vec<(String, PathBuf)>, AppError> {
+        let mut map = self.inner.lock().map_err(|_| AppError::internal())?;
+        map.clear();
+        let mut out = Vec::with_capacity(files.len());
+        for path in files {
+            let token = uuid::Uuid::new_v4().to_string();
+            map.insert(token.clone(), path.clone());
+            out.push((token, path));
+        }
+        Ok(out)
+    }
+
+    pub fn take(&self, token: &str) -> Option<PathBuf> {
+        self.inner.lock().ok()?.remove(token)
+    }
+
+    pub fn clear(&self) {
+        if let Ok(mut map) = self.inner.lock() {
+            map.clear();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -70,5 +102,19 @@ mod tests {
         let dirs = AuthorizedDirs::default();
         dirs.grant(PathBuf::from("/tmp/x")).unwrap();
         assert!(dirs.resolve("/tmp/x").is_err());
+    }
+
+    #[test]
+    fn pending_files_are_single_use_and_replaced_by_new_picks() {
+        let pending = PendingFiles::default();
+        let first = pending.replace(vec![PathBuf::from("/a/1.txt")]).unwrap();
+        let token = first[0].0.clone();
+        assert_eq!(pending.take(&token), Some(PathBuf::from("/a/1.txt")));
+        assert_eq!(pending.take(&token), None);
+
+        let old = pending.replace(vec![PathBuf::from("/a/2.txt")]).unwrap();
+        pending.replace(vec![PathBuf::from("/a/3.txt")]).unwrap();
+        assert_eq!(pending.take(&old[0].0), None);
+        assert_eq!(pending.take("/a/3.txt"), None, "caminhos não são tokens");
     }
 }

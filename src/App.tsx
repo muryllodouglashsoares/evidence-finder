@@ -58,6 +58,7 @@ export default function App() {
   }
 
   function closeProject() {
+    void core.closeProject().catch(() => undefined);
     setProject(null);
     setNotice(null);
     void recents.refresh();
@@ -68,7 +69,7 @@ export default function App() {
       {notice ? <StatusMessage notice={notice} onDismiss={() => setNotice(null)} /> : null}
 
       {project ? (
-        <ProjectPage project={project} onClose={closeProject} />
+        <ProjectPage project={project} onClose={closeProject} onNotice={setNotice} />
       ) : (
         <HomePage
           recents={recents.projects}

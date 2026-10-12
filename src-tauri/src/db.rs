@@ -30,6 +30,31 @@ pub const PROJECT_MIGRATIONS: &[&str] = &[
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
     );",
+    // v2 (Fase 2): documentos importados. Migração apenas aditiva: nenhum dado
+    // existente é alterado ou removido.
+    "CREATE TABLE document (
+        id                      TEXT PRIMARY KEY NOT NULL,
+        project_id              TEXT NOT NULL,
+        name                    TEXT NOT NULL,
+        format                  TEXT NOT NULL,
+        size_bytes              INTEGER NOT NULL CHECK (size_bytes >= 0),
+        storage_mode            TEXT NOT NULL CHECK (storage_mode IN ('reference', 'copy')),
+        source_path             TEXT,
+        managed_path            TEXT,
+        source_modified_ms      INTEGER,
+        imported_at             TEXT NOT NULL,
+        sha256                  TEXT NOT NULL,
+        availability            TEXT NOT NULL,
+        availability_checked_at TEXT,
+        import_state            TEXT NOT NULL,
+        error_message           TEXT,
+        CHECK (
+            (storage_mode = 'reference' AND source_path IS NOT NULL AND managed_path IS NULL)
+            OR (storage_mode = 'copy' AND managed_path IS NOT NULL)
+        )
+    );
+    CREATE UNIQUE INDEX idx_document_sha256 ON document (sha256);
+    CREATE INDEX idx_document_imported_at ON document (imported_at);",
 ];
 
 pub fn latest_project_version() -> i64 {
