@@ -58,4 +58,32 @@ describe("core service", () => {
       ["close_project", undefined],
     ]);
   });
+
+  it("busca e abre fontes enviando apenas identificadores, nunca caminhos", async () => {
+    invokeMock.mockResolvedValue(undefined);
+    const request = {
+      query: "pagamento",
+      filters: { documentIds: [], formats: [], importedFrom: null, importedTo: null },
+      sort: "relevance" as const,
+    };
+    await core.searchSegments("p1", request);
+    await core.getSegmentContext("p1", 7, "pagamento");
+    await core.getSegmentContext("p1", 8);
+    await core.openDocumentSource("p1", "d1");
+    expect(invokeMock.mock.calls).toEqual([
+      ["search_segments", { projectId: "p1", request }],
+      ["get_segment_context", { projectId: "p1", segmentId: 7, query: "pagamento", radius: null }],
+      ["get_segment_context", { projectId: "p1", segmentId: 8, query: null, radius: null }],
+      ["open_document_source", { projectId: "p1", documentId: "d1" }],
+    ]);
+  });
+
+  it("converte consulta inválida do núcleo em CoreError tipado", async () => {
+    invokeMock.mockRejectedValue({ code: "INVALID_QUERY", message: "Há aspas sem fechamento." });
+    await expect(core.searchSegments("p1", {
+      query: '"a',
+      filters: { documentIds: [], formats: [], importedFrom: null, importedTo: null },
+      sort: "relevance",
+    })).rejects.toMatchObject({ code: "INVALID_QUERY" });
+  });
 });

@@ -1,6 +1,9 @@
-import { formatDateTime } from "../lib/format";
+import { useState } from "react";
 import { DocumentsPanel } from "../components/DocumentsPanel";
+import { SearchPanel } from "../components/SearchPanel";
 import type { Notice } from "../components/StatusMessage";
+import { useDocuments } from "../hooks/useDocuments";
+import { formatDateTime } from "../lib/format";
 import type { ProjectInfo } from "../types/contracts";
 
 interface ProjectPageProps {
@@ -9,7 +12,12 @@ interface ProjectPageProps {
   onNotice: (notice: Notice | null) => void;
 }
 
+type Tab = "search" | "documents";
+
 export function ProjectPage({ project, onClose, onNotice }: ProjectPageProps) {
+  const docs = useDocuments(project.id);
+  const [tab, setTab] = useState<Tab>("search");
+
   return (
     <main className="project">
       <header className="project__header">
@@ -41,7 +49,42 @@ export function ProjectPage({ project, onClose, onNotice }: ProjectPageProps) {
         </div>
       </dl>
 
-      <DocumentsPanel projectId={project.id} onNotice={onNotice} />
+      <div className="tabs" role="tablist" aria-label="Seções do projeto">
+        {(
+          [
+            ["search", "Pesquisar"],
+            ["documents", `Documentos${docs.loading ? "" : ` (${docs.documents.length})`}`],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            id={`tab-${id}`}
+            aria-selected={tab === id}
+            aria-controls={`panel-${id}`}
+            className={tab === id ? "tab tab--active" : "tab"}
+            onClick={() => setTab(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* Os dois painéis ficam montados: trocar de aba preserva a pesquisa e os resultados. */}
+      <div role="tabpanel" id="panel-search" aria-labelledby="tab-search" hidden={tab !== "search"}>
+        <SearchPanel
+          projectId={project.id}
+          projectName={project.name}
+          documents={docs.documents}
+          documentsLoading={docs.loading}
+          onGoToDocuments={() => setTab("documents")}
+          onNotice={onNotice}
+        />
+      </div>
+      <div role="tabpanel" id="panel-documents" aria-labelledby="tab-documents" hidden={tab !== "documents"}>
+        <DocumentsPanel projectId={project.id} docs={docs} onNotice={onNotice} />
+      </div>
     </main>
   );
 }

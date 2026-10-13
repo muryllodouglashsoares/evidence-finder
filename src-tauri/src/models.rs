@@ -183,6 +183,8 @@ pub struct DocumentInfo {
     pub availability: Availability,
     pub import_state: ImportState,
     pub error_message: Option<String>,
+    /// Estado da extração textual (Fase 3). Documentos nunca processados: `pending`.
+    pub extraction: ExtractionInfo,
 }
 
 impl From<&DocumentRow> for DocumentInfo {
@@ -202,6 +204,7 @@ impl From<&DocumentRow> for DocumentInfo {
             availability: row.availability,
             import_state: row.import_state,
             error_message: row.error_message.clone(),
+            extraction: ExtractionInfo::pending(),
         }
     }
 }
@@ -260,4 +263,143 @@ pub struct RemoveResult {
     pub managed_copy_deleted: bool,
     /// Aviso quando o registro foi removido mas a cópia não pôde ser excluída.
     pub warning: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Fase 3: extração textual
+// ---------------------------------------------------------------------------
+
+fn corrupt_extraction() -> AppError {
+    AppError::new(
+        ErrorCode::CorruptProject,
+        "Os registros de extração de texto do projeto estão inválidos.",
+    )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtractionStatus {
+    Pending,
+    Processing,
+    Completed,
+    /// Processado com sucesso, mas nenhum texto foi encontrado.
+    NoText,
+    Failed,
+    /// O conteúdo do documento não confere mais com o registrado: os
+    /// resultados antigos foram descartados.
+    Stale,
+}
+
+impl ExtractionStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Processing => "processing",
+            Self::Completed => "completed",
+            Self::NoText => "no_text",
+            Self::Failed => "failed",
+            Self::Stale => "stale",
+        }
+    }
+    pub fn parse(value: &str) -> Result<Self, AppError> {
+        match value {
+            "pending" => Ok(Self::Pending),
+            "processing" => Ok(Self::Processing),
+            "completed" => Ok(Self::Completed),
+            "no_text" => Ok(Self::NoText),
+            "failed" => Ok(Self::Failed),
+            "stale" => Ok(Self::Stale),
+            _ => Err(corrupt_extraction()),
+        }
+    }
+}
+
+/// Como o texto foi obtido. `Mixed` só existe no nível do documento (PDF com
+/// páginas de texto e páginas por OCR).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtractionMethod {
+    Text,
+    PdfText,
+    Ocr,
+    Manual,
+    Mixed,
+}
+
+impl ExtractionMethod {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::PdfText => "pdf_text",
+            Self::Ocr => "ocr",
+            Self::Manual => "manual",
+            Self::Mixed => "mixed",
+        }
+    }
+    pub fn parse(value: &str) -> Result<Self, AppError> {
+        match value {
+            "text" => Ok(Self::Text),
+            "pdf_text" => Ok(Self::PdfText),
+            "ocr" => Ok(Self::Ocr),
+            "manual" => Ok(Self::Manual),
+            "mixed" => Ok(Self::Mixed),
+            _ => Err(corrupt_extraction()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtractionInfo {
+    pub status: ExtractionStatus,
+    pub method: Option<ExtractionMethod>,
+    pub segment_count: u32,
+    pub page_count: Option<u32>,
+    pub char_count: u64,
+    pub finished_at: Option<String>,
+    /// `true` quando o resultado foi gerado por uma versão antiga do extrator.
+    pub outdated: bool,
+    pub error_code: Option<String>,
+    /// Mensagem segura (sem conteúdo do documento nem caminhos).
+    pub message: Option<String>,
+}
+
+impl ExtractionInfo {
+    pub fn pending() -> Self {
+        Self {
+            status: ExtractionStatus::Pending,
+            method: None,
+            segment_count: 0,
+            page_count: None,
+            char_count: 0,
+            finished_at: None,
+            outdated: false,
+            error_code: None,
+            message: None,
+        }
+    }
+}
+
+/// Dependência de OCR (Tesseract) como vista pela interface.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OcrStatus {
+    pub available: bool,
+    pub version: Option<String>,
+    pub languages: Vec<String>,
+    /// Idiomas exigidos que não estão instalados.
+    pub missing_languages: Vec<String>,
+    /// Explicação para o usuário quando `available` é `false`.
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtractionProgress {
+    pub running: bool,
+    pub total: u32,
+    pub done: u32,
+    pub failed: u32,
+    /// Nome (para exibição) do documento em processamento.
+    pub current: Option<String>,
 }

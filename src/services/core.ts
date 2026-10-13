@@ -8,12 +8,17 @@ import type {
   DocumentInfo,
   DocumentList,
   ErrorCode,
+  ExtractionProgress,
   ImportResult,
+  OcrStatus,
   PickedFiles,
   PickPurpose,
   ProjectInfo,
   RecentProject,
   RemoveResult,
+  SearchRequest,
+  SearchResponse,
+  SegmentContext,
   StorageMode,
 } from "../types/contracts";
 
@@ -93,4 +98,37 @@ export const core = {
   /** Remove do projeto (e a cópia gerenciada, se houver). Nunca apaga o arquivo original. */
   removeDocument: (projectId: string, documentId: string) =>
     call<RemoveResult>("remove_document", { projectId, documentId }),
+
+  // --- Fase 3: extração de texto (local; nada sai da máquina) ---
+
+  /** Diagnóstico do Tesseract (instalado? idioma português disponível?). */
+  getOcrStatus: () => call<OcrStatus>("get_ocr_status"),
+
+  /**
+   * Inicia a extração em segundo plano. Sem `documentIds`: pendentes e
+   * desatualizados. Com `documentIds`: exatamente esses (tentar novamente).
+   */
+  startExtraction: (projectId: string, documentIds?: string[]) =>
+    call<ExtractionProgress>("start_extraction", { projectId, documentIds: documentIds ?? null }),
+
+  getExtractionProgress: (projectId: string) =>
+    call<ExtractionProgress>("get_extraction_progress", { projectId }),
+
+  // --- Fase 4: busca local (FTS5). O núcleo valida o projeto, os filtros e os caminhos. ---
+
+  searchSegments: (projectId: string, request: SearchRequest) =>
+    call<SearchResponse>("search_segments", { projectId, request }),
+
+  /** Trecho completo e vizinhos do mesmo documento. `query` só serve para destacar termos. */
+  getSegmentContext: (projectId: string, segmentId: number, query?: string, radius?: number) =>
+    call<SegmentContext>("get_segment_context", {
+      projectId,
+      segmentId,
+      query: query ?? null,
+      radius: radius ?? null,
+    }),
+
+  /** Abre o documento original no aplicativo padrão. A interface envia só o identificador. */
+  openDocumentSource: (projectId: string, documentId: string) =>
+    call<void>("open_document_source", { projectId, documentId }),
 };

@@ -2,12 +2,15 @@
 //! a interface não recebe plugins de sistema de arquivos.
 
 use crate::error::{AppError, ErrorCode};
+use crate::extraction::{self, OcrProvider};
 use crate::documents::{self, ProjectHandle, MAX_DOCUMENTS};
 use crate::models::{
-    DirectorySelection, DocumentInfo, DocumentList, ImportFailure, ImportResult, PickPurpose,
-    PickedFile, PickedFiles, ProjectInfo, RecentProject, RemoveResult, StorageMode,
+    DirectorySelection, DocumentInfo, DocumentList, ExtractionProgress, ImportFailure, ImportResult,
+    OcrStatus, PickPurpose, PickedFile, PickedFiles, ProjectInfo, RecentProject, RemoveResult,
+    StorageMode,
 };
 use crate::paths;
+use crate::search::{self, SearchRequest, SearchResponse, SegmentContext};
 use crate::service::{self, OpenedProject};
 use crate::state::AppState;
 use std::path::Path;
@@ -167,6 +170,11 @@ pub fn list_documents(
     project_id: String,
 ) -> Result<DocumentList, AppError> {
     let project = state.current_for(&project_id)?;
+    if !state.extraction.is_running() {
+        // Processamentos interrompidos por um fechamento inesperado voltam a pendentes.
+        let _guard = state.write_lock.lock().map_err(|_| AppError::internal())?;
+        extraction::reset_interrupted(&project)?;
+    }
     documents::list_documents(&project)
 }
 
@@ -262,8 +270,20 @@ pub fn add_text_document(
     text: String,
 ) -> Result<ImportResult, AppError> {
     let project = state.current_for(&project_id)?;
-    let _guard = state.write_lock.lock().map_err(|_| AppError::internal())?;
-    documents::add_text(&project, &title, &text)
+    let mut result = {
+        let _guard = state.write_lock.lock().map_err(|_| AppError::internal())?;
+        documents::add_text(&project, &title, &text)?
+    };
+    // O texto digitado entra direto no pipeline (sem salvar TXT). É curto e não
+    // usa OCR; uma falha aqui não desfaz a inclusão, só deixa o item pendente.
+    if let Some(doc) = result.imported.first_mut() {
+        let mut ocr = OcrProvider::unavailable("OCR não é usado em texto digitado.");
+        let _ = extraction::process_document(&project, &doc.id, &mut ocr, &state.write_lock);
+        if let Ok(conn) = crate::docstore::connect(&project.dir) {
+            let _ = extraction::overlay(&conn, std::slice::from_mut(doc));
+        }
+    }
+    Ok(result)
 }
 
 #[tauri::command(async)]
@@ -285,4 +305,88 @@ pub fn remove_document(
     let project = state.current_for(&project_id)?;
     let _guard = state.write_lock.lock().map_err(|_| AppError::internal())?;
     documents::remove_document(&project, &document_id)
+}
+
+/// Diagnóstico do Tesseract (instalado? idioma português disponível?).
+#[tauri::command(async)]
+pub fn get_ocr_status() -> OcrStatus {
+    extraction::ocr_status()
+}
+
+/// Inicia a extração em segundo plano. Sem `document_ids`: pendentes e
+/// desatualizados. Com `document_ids`: exatamente esses (tentar novamente).
+#[tauri::command(async)]
+pub fn start_extraction(
+    state: State<'_, AppState>,
+    project_id: String,
+    document_ids: Option<Vec<String>>,
+) -> Result<ExtractionProgress, AppError> {
+    let project = state.current_for(&project_id)?;
+    {
+        let _guard = state.write_lock.lock().map_err(|_| AppError::internal())?;
+        if !state.extraction.is_running() {
+            extraction::reset_interrupted(&project)?;
+        }
+    }
+    extraction::start_batch(
+        &project,
+        document_ids.as_deref(),
+        &state.extraction,
+        &state.write_lock,
+    )
+}
+
+#[tauri::command(async)]
+pub fn get_extraction_progress(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<ExtractionProgress, AppError> {
+    state.current_for(&project_id)?;
+    Ok(state.extraction.snapshot(&project_id))
+}
+
+// ---------------------------------------------------------------------------
+// Fase 4: busca e análise dos resultados (tudo local)
+// ---------------------------------------------------------------------------
+
+/// Busca lexical (FTS5) restrita ao projeto aberto.
+#[tauri::command(async)]
+pub fn search_segments(
+    state: State<'_, AppState>,
+    project_id: String,
+    request: SearchRequest,
+) -> Result<SearchResponse, AppError> {
+    let project = state.current_for(&project_id)?;
+    search::search(&project, &request)
+}
+
+/// Trecho completo e vizinhos do mesmo documento, para conferir o contexto.
+#[tauri::command(async)]
+pub fn get_segment_context(
+    state: State<'_, AppState>,
+    project_id: String,
+    segment_id: i64,
+    query: Option<String>,
+    radius: Option<u32>,
+) -> Result<SegmentContext, AppError> {
+    let project = state.current_for(&project_id)?;
+    search::segment_context(&project, segment_id, query.as_deref(), radius)
+}
+
+/// Abre o documento original no aplicativo padrão do sistema. A interface só
+/// informa o identificador; o caminho vem do banco do projeto e é revalidado.
+#[tauri::command(async)]
+pub fn open_document_source(
+    state: State<'_, AppState>,
+    project_id: String,
+    document_id: String,
+) -> Result<(), AppError> {
+    let project = state.current_for(&project_id)?;
+    let path = documents::source_file_for_open(&project, &document_id)?;
+    open::that_detached(path).map_err(|_| {
+        AppError::new(
+            ErrorCode::Io,
+            "O sistema não conseguiu abrir o arquivo. Verifique se há um aplicativo padrão para este tipo de arquivo.",
+        )
+    })
 }

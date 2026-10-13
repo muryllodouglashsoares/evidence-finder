@@ -205,3 +205,58 @@ ul { list-style: none; }
 }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* Fase 3: extração de texto */
+.extract { display: grid; gap: 8px; margin: 0 0 14px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); }
+.extract__row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.extract__row p { margin: 0; }
+.extract__progress { width: 100%; height: 8px; }
+.extract__warn { margin: 0; color: var(--warn); }
+.extract__error { margin: 0; color: var(--err); }
+
+/* Fase 4: busca e análise dos resultados */
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
+.tab { font: inherit; padding: 8px 18px; border: 1px solid transparent; border-bottom: 0; border-radius: var(--radius) var(--radius) 0 0; background: transparent; color: var(--ink-soft); cursor: pointer; margin-bottom: -1px; }
+.tab:hover { color: var(--ink); }
+.tab--active { background: var(--surface); border-color: var(--line); color: var(--ink); font-weight: 600; }
+[role="tabpanel"][hidden] { display: none; }
+
+.search { display: flex; flex-direction: column; gap: 14px; }
+.searchbar { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+.searchbar__field { flex: 1 1 320px; min-width: 0; }
+.searchbar .btn { height: 38px; padding-top: 0; padding-bottom: 0; }
+
+.filters { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); padding: 10px 14px; }
+.filters summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+.filters[open] { display: flex; flex-direction: column; gap: 12px; }
+.filters__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-top: 10px; align-items: start; }
+.filters__group { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.filters__group legend { font-weight: 600; font-size: 14px; padding: 0; margin-bottom: 4px; }
+.filters__group--docs { grid-column: span 2; }
+.filters__docs { max-height: 150px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 10px; background: var(--bg); display: flex; flex-direction: column; gap: 2px; }
+.check { display: flex; gap: 8px; align-items: center; font-size: 14px; min-width: 0; }
+.check__text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.results { display: flex; flex-direction: column; gap: 12px; }
+.hits { display: flex; flex-direction: column; gap: 12px; }
+.hit { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
+.hit__head { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.hit__doc { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hit__pos { color: var(--ink-soft); font-weight: 400; margin-right: 8px; font-size: 13px; }
+.hit__meta { display: flex; flex-wrap: wrap; gap: 2px 14px; align-items: center; font-size: 13px; color: var(--ink-soft); }
+.hit__meta .badge { margin-left: 0; }
+.hit__low { color: var(--warn); font-weight: 600; }
+.hit__text { margin: 0; padding: 8px 12px; border-left: 3px solid var(--accent); background: var(--bg); white-space: pre-wrap; overflow-wrap: anywhere; }
+.hit__actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.hit-mark { background: var(--accent-bg); color: inherit; border-radius: 2px; padding: 0 1px; font-weight: 600; }
+
+.ctx { max-height: 55vh; overflow: auto; gap: 10px; }
+.ctx__seg { border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; background: var(--bg); }
+.ctx__seg--target { border-color: var(--accent); background: var(--surface-2); }
+.ctx__meta { font-size: 12px; color: var(--ink-soft); margin-bottom: 4px; }
+.ctx__text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.ctx__more { text-align: center; }
+
+@media (max-width: 900px) {
+  .filters__group--docs { grid-column: auto; }
+}

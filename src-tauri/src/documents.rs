@@ -205,7 +205,7 @@ fn ensure_managed_dir(project_dir: &Path) -> Result<PathBuf, AppError> {
 /// Converte o caminho relativo guardado no banco em caminho absoluto, aceitando
 /// SOMENTE o formato que o próprio app gera (`files/<uuid>.<ext>`). Um banco
 /// adulterado não consegue apontar para fora da pasta gerenciada.
-fn resolve_managed(project_dir: &Path, relative: &str) -> Result<PathBuf, AppError> {
+pub(crate) fn resolve_managed(project_dir: &Path, relative: &str) -> Result<PathBuf, AppError> {
     let invalid = || err(ErrorCode::CorruptProject, "O caminho da cópia gerenciada é inválido.");
     let file = relative
         .strip_prefix(&format!("{MANAGED_DIR}/"))
@@ -529,6 +529,18 @@ fn quick_availability(project: &ProjectHandle, row: &DocumentRow) -> Availabilit
     }
 }
 
+/// Disponibilidade a exibir: a verificação rápida atual, preservando as marcas
+/// de integridade (`modified`/`corrupted`) até que `verify_document` as limpe.
+pub(crate) fn displayed_availability(project: &ProjectHandle, row: &DocumentRow) -> Availability {
+    let sticky = matches!(row.availability, Availability::Corrupted | Availability::Modified);
+    let quick = quick_availability(project, row);
+    if sticky && quick == Availability::Available {
+        row.availability
+    } else {
+        quick
+    }
+}
+
 /// Lista os documentos com a disponibilidade atualizada. Marcas de integridade
 /// (`modified`/`corrupted`) só são limpas por `verify_document`.
 pub fn list_documents(project: &ProjectHandle) -> Result<DocumentList, AppError> {
@@ -537,12 +549,7 @@ pub fn list_documents(project: &ProjectHandle) -> Result<DocumentList, AppError>
     for mut row in docstore::list(&conn)? {
         let stored = row.availability;
         let sticky = matches!(stored, Availability::Corrupted | Availability::Modified);
-        let quick = quick_availability(project, &row);
-        let shown = if sticky && quick == Availability::Available {
-            stored
-        } else {
-            quick
-        };
+        let shown = displayed_availability(project, &row);
         if !sticky && shown != stored {
             // Falha ao persistir o estado não impede a listagem.
             let _ = docstore::update_availability(&conn, &row.id, shown, &now_rfc3339());
@@ -550,6 +557,7 @@ pub fn list_documents(project: &ProjectHandle) -> Result<DocumentList, AppError>
         row.availability = shown;
         documents.push(DocumentInfo::from(&row));
     }
+    crate::extraction::overlay(&conn, &mut documents)?;
     Ok(DocumentList {
         documents,
         limit: MAX_DOCUMENTS,
@@ -610,11 +618,77 @@ pub fn verify_document(project: &ProjectHandle, id: &str) -> Result<DocumentInfo
     }
     row.availability = availability;
     row.availability_checked_at = Some(now);
-    Ok(DocumentInfo::from(&row))
+    let mut info = DocumentInfo::from(&row);
+    crate::extraction::overlay(&conn, std::slice::from_mut(&mut info))?;
+    Ok(info)
 }
 
 fn not_found() -> AppError {
     err(ErrorCode::NotFound, "Documento não encontrado neste projeto.")
+}
+
+fn extension_matches(path: &Path, format: crate::docformat::DocFormat) -> bool {
+    use crate::docformat::DocFormat;
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase());
+    matches!(
+        (format, ext.as_deref()),
+        (DocFormat::Png, Some("png"))
+            | (DocFormat::Jpeg, Some("jpg" | "jpeg"))
+            | (DocFormat::Pdf, Some("pdf"))
+            | (DocFormat::Txt, Some("txt"))
+    )
+}
+
+/// Caminho do arquivo de um documento do projeto aberto, validado para ser
+/// aberto no aplicativo padrão do sistema. O identificador vem da interface,
+/// mas o caminho sempre vem do banco do projeto. Recusa fontes ausentes,
+/// alteradas, corrompidas, que não sejam arquivos comuns ou cuja extensão não
+/// corresponda ao formato importado (nunca abre executáveis).
+pub fn source_file_for_open(project: &ProjectHandle, id: &str) -> Result<PathBuf, AppError> {
+    let conn = docstore::connect(&project.dir)?;
+    let row = docstore::get(&conn, id)?.ok_or_else(not_found)?;
+    if row.project_id != project.id {
+        return Err(not_found());
+    }
+    match displayed_availability(project, &row) {
+        Availability::Available => {}
+        Availability::Missing => {
+            return Err(err(
+                ErrorCode::NotFound,
+                "O arquivo original não foi encontrado. Ele pode ter sido movido, renomeado ou apagado.",
+            ))
+        }
+        Availability::Modified => {
+            return Err(err(
+                ErrorCode::InvalidFile,
+                "O arquivo original foi alterado depois da importação e não confere mais com o registro. Por segurança, ele não foi aberto.",
+            ))
+        }
+        Availability::Corrupted => {
+            return Err(err(
+                ErrorCode::CorruptProject,
+                "A cópia guardada no projeto está danificada. Por segurança, ela não foi aberta.",
+            ))
+        }
+        Availability::Inaccessible => {
+            return Err(err(
+                ErrorCode::PermissionDenied,
+                "Sem permissão para ler o arquivo original.",
+            ))
+        }
+    }
+    let located = crate::extraction::locate(project, &row)?;
+    let path = dunce::canonicalize(&located)?;
+    if !path.is_file() || !extension_matches(&path, row.format) {
+        return Err(err(
+            ErrorCode::InvalidFile,
+            "O arquivo registrado não é válido para este documento.",
+        ));
+    }
+    Ok(path)
 }
 
 // ---------------------------------------------------------------------------

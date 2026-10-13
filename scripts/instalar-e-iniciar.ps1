@@ -1,5 +1,5 @@
 ﻿# Evidence Finder - instalador e inicializador para Windows.
-# Instala o que faltar (Node.js, Rust, Ferramentas C++, WebView2), compila o app
+# Instala o que faltar (Node.js, Rust, Ferramentas C++, WebView2, Tesseract OCR), compila o app
 # na primeira vez e o abre. Nas proximas vezes, apenas abre o app.
 param([switch]$Recompilar)
 
@@ -37,6 +37,46 @@ function Tem-WebView2 {
     return $false
 }
 
+function Achar-Tesseract {
+    $c = @()
+    if ($env:EVIDENCE_FINDER_TESSERACT) { $c += $env:EVIDENCE_FINDER_TESSERACT }
+    $c += (Join-Path $env:ProgramFiles "Tesseract-OCR\tesseract.exe")
+    $cmd = Get-Command tesseract -ErrorAction SilentlyContinue
+    if ($cmd) { $c += $cmd.Source }
+    foreach ($p in $c) { if ($p -and (Test-Path $p)) { return $p } }
+    return $null
+}
+# OCR e opcional: qualquer falha aqui vira aviso e nunca impede de abrir o app.
+function Garantir-Tesseract {
+    try {
+        $t = Achar-Tesseract
+        if (-not $t) {
+            if (-not (Tem "winget")) { Write-Host "AVISO: sem winget, o Tesseract (OCR) nao foi instalado. Imagens e PDFs digitalizados nao poderao ser lidos." -ForegroundColor Yellow; return }
+            Titulo "Instalando Tesseract OCR (leitura de imagens e PDFs digitalizados)"
+            Write-Host "Se o Windows pedir permissao de administrador, clique em Sim."
+            Winget-Instalar "UB-Mannheim.TesseractOCR" @("--silent")
+            Atualizar-Path
+            $t = Achar-Tesseract
+        }
+        if (-not $t) { Write-Host "AVISO: o Tesseract nao foi encontrado depois da instalacao. O OCR ficara indisponivel." -ForegroundColor Yellow; return }
+        $dados = Join-Path (Split-Path -Parent $t) "tessdata"
+        $por = Join-Path $dados "por.traineddata"
+        if (Test-Path $por) { Write-Host "Tesseract (OCR em portugues): ok"; return }
+        Titulo "Baixando o idioma portugues do OCR"
+        $tmp = Join-Path $env:TEMP "por.traineddata"
+        Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/tesseract-ocr/tessdata_fast/raw/main/por.traineddata" -OutFile $tmp
+        if ((Get-Item $tmp).Length -lt 500000) { throw "arquivo de idioma incompleto" }
+        try { Copy-Item $tmp $por -Force -ErrorAction Stop }
+        catch {
+            Write-Host "Copiando com permissao de administrador (clique em Sim)..."
+            Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList @("-NoProfile", "-Command", "Copy-Item -LiteralPath '$tmp' -Destination '$por' -Force")
+        }
+        if (Test-Path $por) { Write-Host "Idioma portugues do OCR instalado." } else { throw "nao foi possivel copiar o idioma para $dados" }
+    } catch {
+        Write-Host "AVISO: OCR nao configurado ($($_.Exception.Message)). O app abre normalmente; imagens e PDFs digitalizados ficam indisponiveis ate instalar o Tesseract com o idioma Portuguese." -ForegroundColor Yellow
+    }
+}
+
 try {
     Write-Host "Evidence Finder" -ForegroundColor Green
     Write-Host "Tudo roda no seu computador. Nada e enviado para a internet pelo aplicativo."
@@ -46,6 +86,7 @@ try {
     $exe = Join-Path $raiz "src-tauri\target\release\evidence-finder.exe"
 
     if ((Test-Path $exe) -and -not $Recompilar) {
+        if (-not (Achar-Tesseract)) { Garantir-Tesseract }
         Titulo "Abrindo o Evidence Finder"
         Start-Process $exe
         return
@@ -84,6 +125,8 @@ try {
         Titulo "Instalando WebView2"
         Winget-Instalar "Microsoft.EdgeWebView2Runtime" @("--silent")
     } else { Write-Host "WebView2: ok" }
+
+    Garantir-Tesseract
 
     Atualizar-Path
     foreach ($c in @("node", "npm", "cargo")) {

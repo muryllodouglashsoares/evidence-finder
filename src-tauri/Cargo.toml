@@ -1,7 +1,7 @@
 [package]
 name = "evidence-finder"
 version = "0.1.0"
-description = "Evidence Finder — pesquisa local em evidências (Fase 2: documentos)"
+description = "Evidence Finder — pesquisa local em evidências (Fase 4: busca e análise)"
 edition = "2021"
 rust-version = "1.77.2"
 publish = false
@@ -21,13 +21,21 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 dunce = "1"
+# Abre o arquivo no aplicativo padrão do sistema (ShellExecute no Windows), sem
+# interpretar o caminho por um shell.
+open = "5"
 sha2 = "0.10"
+encoding_rs = "0.8"
+# Leitura de PDF em Rust puro (MIT), sem rayon/chrono/time/jiff.
+lopdf = { version = "0.36", default-features = false }
 
 [dev-dependencies]
 tempfile = "3"
 
 [profile.release]
-panic = "abort"
+# `unwind` (não `abort`): a extração isola falhas de parsers de PDF com
+# catch_unwind para que um documento problemático não derrube o aplicativo.
+panic = "unwind"
 codegen-units = 1
 lto = true
 opt-level = "s"

@@ -21,6 +21,8 @@ pub fn connect(project_dir: &Path) -> Result<Connection, AppError> {
         OpenFlags::SQLITE_OPEN_READ_WRITE,
     )?;
     conn.busy_timeout(Duration::from_secs(5))?;
+    // Necessário para o ON DELETE CASCADE das tabelas de extração (Fase 3).
+    conn.pragma_update(None, "foreign_keys", true)?;
     Ok(conn)
 }
 

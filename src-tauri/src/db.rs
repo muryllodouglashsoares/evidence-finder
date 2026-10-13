@@ -55,6 +55,80 @@ pub const PROJECT_MIGRATIONS: &[&str] = &[
     );
     CREATE UNIQUE INDEX idx_document_sha256 ON document (sha256);
     CREATE INDEX idx_document_imported_at ON document (imported_at);",
+    // v3 (Fase 3): extração textual. Migração apenas aditiva. Documentos da
+    // Fase 2 não têm linha em `extraction`: a ausência significa "pendente".
+    // `text_segment` guarda o texto com a origem (página, linhas, região) e
+    // foi pensada para ser indexada por FTS5 na Fase 4 (a tabela virtual será
+    // criada naquela fase, apontando para `text_segment.id`).
+    "CREATE TABLE extraction (
+        document_id       TEXT PRIMARY KEY NOT NULL REFERENCES document(id) ON DELETE CASCADE,
+        project_id        TEXT NOT NULL,
+        status            TEXT NOT NULL CHECK (status IN
+                            ('pending','processing','completed','no_text','failed','stale')),
+        method            TEXT CHECK (method IS NULL OR method IN
+                            ('text','pdf_text','ocr','manual','mixed')),
+        content_sha256    TEXT,
+        extractor_version INTEGER,
+        engine            TEXT,
+        segment_count     INTEGER NOT NULL DEFAULT 0 CHECK (segment_count >= 0),
+        page_count        INTEGER,
+        char_count        INTEGER NOT NULL DEFAULT 0 CHECK (char_count >= 0),
+        error_code        TEXT,
+        message           TEXT,
+        started_at        TEXT,
+        finished_at       TEXT
+    );
+    CREATE TABLE text_segment (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        document_id  TEXT NOT NULL REFERENCES document(id) ON DELETE CASCADE,
+        project_id   TEXT NOT NULL,
+        seq          INTEGER NOT NULL CHECK (seq >= 0),
+        text         TEXT NOT NULL,
+        method       TEXT NOT NULL CHECK (method IN ('text','pdf_text','ocr','manual')),
+        page_number  INTEGER CHECK (page_number IS NULL OR page_number >= 1),
+        line_start   INTEGER,
+        line_end     INTEGER,
+        char_start   INTEGER,
+        char_end     INTEGER,
+        bbox_x       INTEGER,
+        bbox_y       INTEGER,
+        bbox_w       INTEGER,
+        bbox_h       INTEGER,
+        image_width  INTEGER,
+        image_height INTEGER,
+        confidence   REAL,
+        UNIQUE (document_id, seq)
+    );
+    CREATE INDEX idx_text_segment_document ON text_segment (document_id, seq);",
+    // v4 (Fase 4): índice de busca lexical FTS5. Migração apenas aditiva: nenhuma
+    // tabela existente é alterada. O índice usa conteúdo EXTERNO (`text_segment`
+    // continua sendo a única cópia do texto) e `rowid` = `text_segment.id`.
+    // Os gatilhos mantêm o índice sincronizado em qualquer gravação, inclusive
+    // as exclusões em cascata ao remover um documento e as substituições feitas
+    // ao reprocessar. O `rebuild` final indexa os segmentos que já existiam
+    // (projetos da Fase 3) dentro da mesma transação da migração: ou tudo é
+    // aplicado, ou nada (uma migração interrompida é desfeita e repetida na
+    // próxima abertura). `remove_diacritics 2` torna a busca insensível a
+    // maiúsculas e acentos ("transferencia" encontra "transferência").
+    "CREATE VIRTUAL TABLE text_segment_fts USING fts5(
+        text,
+        content = 'text_segment',
+        content_rowid = 'id',
+        tokenize = 'unicode61 remove_diacritics 2'
+    );
+    CREATE TRIGGER text_segment_fts_ai AFTER INSERT ON text_segment BEGIN
+        INSERT INTO text_segment_fts (rowid, text) VALUES (new.id, new.text);
+    END;
+    CREATE TRIGGER text_segment_fts_ad AFTER DELETE ON text_segment BEGIN
+        INSERT INTO text_segment_fts (text_segment_fts, rowid, text)
+        VALUES ('delete', old.id, old.text);
+    END;
+    CREATE TRIGGER text_segment_fts_au AFTER UPDATE OF text ON text_segment BEGIN
+        INSERT INTO text_segment_fts (text_segment_fts, rowid, text)
+        VALUES ('delete', old.id, old.text);
+        INSERT INTO text_segment_fts (rowid, text) VALUES (new.id, new.text);
+    END;
+    INSERT INTO text_segment_fts (text_segment_fts) VALUES ('rebuild');",
 ];
 
 pub fn latest_project_version() -> i64 {

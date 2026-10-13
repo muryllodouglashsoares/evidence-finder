@@ -1,5 +1,6 @@
-import { useState } from "react";
-import { useDocuments } from "../hooks/useDocuments";
+import { useCallback, useState } from "react";
+import type { DocumentsHook } from "../hooks/useDocuments";
+import { useExtraction } from "../hooks/useExtraction";
 import {
   availabilityHint,
   AVAILABILITY_LABEL,
@@ -9,9 +10,26 @@ import {
   STORAGE_LABEL,
   summarizeImport,
 } from "../lib/documents";
+import {
+  describeExtraction,
+  EXTRACTION_LABEL,
+  EXTRACTION_TONE,
+  failedIds,
+  isRetryable,
+  mayNeedOcr,
+  pendingIds,
+  progressLabel,
+  summarizeRun,
+} from "../lib/extraction";
 import { formatBytes, formatDateTime } from "../lib/format";
 import { core, normalizeError } from "../services/core";
-import type { DocumentInfo, ImportResult, PickedFiles, StorageMode } from "../types/contracts";
+import type {
+  DocumentInfo,
+  ExtractionProgress,
+  ImportResult,
+  PickedFiles,
+  StorageMode,
+} from "../types/contracts";
 import { AddTextDialog } from "./AddTextDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ImportDialog } from "./ImportDialog";
@@ -20,11 +38,13 @@ import type { Notice } from "./StatusMessage";
 
 interface DocumentsPanelProps {
   projectId: string;
+  /** Estado dos documentos, compartilhado com a aba de pesquisa. */
+  docs: DocumentsHook;
   onNotice: (notice: Notice | null) => void;
 }
 
-export function DocumentsPanel({ projectId, onNotice }: DocumentsPanelProps) {
-  const { documents, limit, loading, error, refresh } = useDocuments(projectId);
+export function DocumentsPanel({ projectId, docs, onNotice }: DocumentsPanelProps) {
+  const { documents, limit, loading, error, refresh } = docs;
   const [picking, setPicking] = useState(false);
   const [picked, setPicked] = useState<PickedFiles | null>(null);
   const [importing, setImporting] = useState(false);
@@ -36,6 +56,23 @@ export function DocumentsPanel({ projectId, onNotice }: DocumentsPanelProps) {
   const [toRemove, setToRemove] = useState<DocumentInfo | null>(null);
   const [removing, setRemoving] = useState(false);
   const [verifyingId, setVerifyingId] = useState<string | null>(null);
+
+  const handleFinished = useCallback(
+    (final: ExtractionProgress) => onNotice(summarizeRun(final)),
+    [onNotice],
+  );
+  const {
+    progress,
+    running,
+    ocr,
+    ocrChecking,
+    error: extractionError,
+    start,
+    recheckOcr,
+  } = useExtraction(projectId, refresh, handleFinished);
+  const pending = pendingIds(documents);
+  const failed = failedIds(documents);
+  const ocrMissing = ocr !== null && !ocr.available && documents.some(mayNeedOcr);
 
   const remaining = Math.max(0, limit - documents.length);
   const full = remaining === 0;
@@ -174,6 +211,66 @@ export function DocumentsPanel({ projectId, onNotice }: DocumentsPanelProps) {
         </div>
       </div>
 
+      {!loading && !error && documents.length > 0 ? (
+        <div className="extract">
+          <div className="extract__row">
+            <p className="muted small" aria-live="polite">
+              {running && progress
+                ? progressLabel(progress)
+                : pending.length > 0
+                  ? `${pending.length} ${pending.length === 1 ? "documento aguarda" : "documentos aguardam"} extração de texto.`
+                  : "Extração de texto em dia."}
+            </p>
+            <div className="actions">
+              <button
+                type="button"
+                className="btn btn--small"
+                onClick={() => void start()}
+                disabled={running || pending.length === 0}
+              >
+                Processar pendentes
+              </button>
+              {failed.length > 0 ? (
+                <button
+                  type="button"
+                  className="btn btn--small"
+                  onClick={() => void start(failed)}
+                  disabled={running}
+                >
+                  Tentar falhas novamente ({failed.length})
+                </button>
+              ) : null}
+            </div>
+          </div>
+          {running && progress ? (
+            <progress
+              className="extract__progress"
+              max={Math.max(progress.total, 1)}
+              value={progress.done}
+              aria-label="Progresso da extração de texto"
+            />
+          ) : null}
+          {extractionError ? (
+            <p className="small extract__error" role="alert">
+              {extractionError}
+            </p>
+          ) : null}
+          {ocrMissing ? (
+            <p className="small extract__warn" role="status">
+              {ocr?.message}{" "}
+              <button
+                type="button"
+                className="btn btn--small btn--quiet"
+                onClick={() => void recheckOcr()}
+                disabled={ocrChecking}
+              >
+                {ocrChecking ? "Verificando…" : "Verificar novamente"}
+              </button>
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
       {error ? (
         <div className="empty">
           <p>{error}</p>
@@ -189,8 +286,8 @@ export function DocumentsPanel({ projectId, onNotice }: DocumentsPanelProps) {
         <div className="empty">
           <p>Ainda não há documentos neste projeto.</p>
           <p className="muted">
-            Importe imagens (PNG, JPEG), arquivos TXT e PDF, ou cole um texto. Os documentos ficam
-            organizados aqui; a leitura do conteúdo (OCR) e a busca chegam em fases futuras.
+            Importe imagens (PNG, JPEG), arquivos TXT e PDF, ou cole um texto. O texto é extraído
+            localmente (com OCR quando necessário) e fica disponível na aba Pesquisar.
           </p>
         </div>
       ) : (
@@ -219,6 +316,14 @@ export function DocumentsPanel({ projectId, onNotice }: DocumentsPanelProps) {
                     <span className={`badge badge--${tone}`}>{AVAILABILITY_LABEL[doc.availability]}</span>
                     {hint ? <span className="muted small"> {hint}</span> : null}
                   </p>
+                  <p className="doc__status">
+                    <span className={`badge badge--${EXTRACTION_TONE[doc.extraction.status]}`}>
+                      {EXTRACTION_LABEL[doc.extraction.status]}
+                    </span>
+                    {describeExtraction(doc.extraction) ? (
+                      <span className="muted small"> {describeExtraction(doc.extraction)}</span>
+                    ) : null}
+                  </p>
                 </div>
                 <div className="doc__actions">
                   <button
@@ -230,6 +335,16 @@ export function DocumentsPanel({ projectId, onNotice }: DocumentsPanelProps) {
                   >
                     {verifyingId === doc.id ? "Verificando…" : "Verificar"}
                   </button>
+                  {isRetryable(doc.extraction) ? (
+                    <button
+                      type="button"
+                      className="btn btn--small"
+                      onClick={() => void start([doc.id])}
+                      disabled={busy || running}
+                    >
+                      Tentar novamente
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     className="btn btn--small btn--quiet"

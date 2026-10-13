@@ -20,6 +20,10 @@ export type ErrorCode =
   | "IO"
   | "DATABASE"
   | "INTERNAL"
+  | "OCR_UNAVAILABLE"
+  | "EXTRACTION_FAILED"
+  | "BUSY"
+  | "INVALID_QUERY"
   | "CORE_UNAVAILABLE";
 
 export interface CoreErrorPayload {
@@ -74,6 +78,50 @@ export interface DocumentInfo {
   availability: Availability;
   importState: "imported";
   errorMessage: string | null;
+  /** Estado da extração de texto (Fase 3). */
+  extraction: ExtractionInfo;
+}
+
+// --- Fase 3: extração de texto ---
+
+export type ExtractionStatus =
+  | "pending"
+  | "processing"
+  | "completed"
+  | "no_text"
+  | "failed"
+  | "stale";
+
+export type ExtractionMethod = "text" | "pdf_text" | "ocr" | "manual" | "mixed";
+
+export interface ExtractionInfo {
+  status: ExtractionStatus;
+  method: ExtractionMethod | null;
+  segmentCount: number;
+  pageCount: number | null;
+  charCount: number;
+  finishedAt: string | null;
+  /** Resultado gerado por uma versão antiga do extrator. */
+  outdated: boolean;
+  errorCode: string | null;
+  /** Mensagem segura (sem conteúdo do documento). */
+  message: string | null;
+}
+
+export interface OcrStatus {
+  available: boolean;
+  version: string | null;
+  languages: string[];
+  missingLanguages: string[];
+  message: string | null;
+}
+
+export interface ExtractionProgress {
+  running: boolean;
+  total: number;
+  done: number;
+  failed: number;
+  current: string | null;
 }
 
 export interface DocumentList {
@@ -113,4 +161,98 @@ export interface ImportResult {
 export interface RemoveResult {
   managedCopyDeleted: boolean;
   warning: string | null;
+}
+
+// --- Fase 4: busca e análise dos resultados ---
+
+export type SearchSort = "relevance" | "document";
+
+export interface SearchFilters {
+  /** Vazio = todos os documentos. */
+  documentIds: string[];
+  /** Vazio = todos os formatos. */
+  formats: DocFormat[];
+  /** Data de IMPORTAÇÃO (RFC 3339), inclusive. */
+  importedFrom: string | null;
+  /** Data de IMPORTAÇÃO (RFC 3339), exclusiva. */
+  importedTo: string | null;
+}
+
+export interface SearchRequest {
+  query: string;
+  filters: SearchFilters;
+  sort: SearchSort;
+  limit?: number;
+  offset?: number;
+}
+
+export interface TextSpan {
+  text: string;
+  matched: boolean;
+}
+
+export interface BBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  imageWidth: number;
+  imageHeight: number;
+}
+
+/** Origem do trecho dentro do documento. */
+export interface SegmentLocation {
+  seq: number;
+  method: ExtractionMethod;
+  pageNumber: number | null;
+  lineStart: number | null;
+  lineEnd: number | null;
+  charStart: number | null;
+  charEnd: number | null;
+  bbox: BBox | null;
+  /** 0–100 (somente OCR). */
+  confidence: number | null;
+}
+
+export interface DocumentRef {
+  id: string;
+  name: string;
+  format: DocFormat;
+  storageMode: StorageMode;
+  importedAt: string;
+  availability: Availability;
+}
+
+export interface SearchHit extends SegmentLocation {
+  segmentId: number;
+  /** Posição na ordenação atual, a partir de 1. */
+  position: number;
+  document: DocumentRef;
+  preview: TextSpan[];
+  previewCutStart: boolean;
+  previewCutEnd: boolean;
+  /** Tamanho do trecho completo, em caracteres. */
+  textLength: number;
+}
+
+export interface SearchResponse {
+  total: number;
+  documentCount: number;
+  offset: number;
+  limit: number;
+  hasMore: boolean;
+  results: SearchHit[];
+}
+
+export interface ContextSegment extends SegmentLocation {
+  segmentId: number;
+  isTarget: boolean;
+  text: TextSpan[];
+}
+
+export interface SegmentContext {
+  document: DocumentRef;
+  segments: ContextSegment[];
+  moreBefore: boolean;
+  moreAfter: boolean;
 }

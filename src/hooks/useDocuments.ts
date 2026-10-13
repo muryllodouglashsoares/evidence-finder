@@ -9,7 +9,9 @@ interface DocumentsState {
   error: string | null;
 }
 
-export function useDocuments(projectId: string): DocumentsState & { refresh: () => Promise<void> } {
+export type DocumentsHook = DocumentsState & { refresh: () => Promise<void> };
+
+export function useDocuments(projectId: string): DocumentsHook {
   const [state, setState] = useState<DocumentsState>({
     documents: [],
     limit: 500,

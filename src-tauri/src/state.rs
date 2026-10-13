@@ -3,7 +3,7 @@ use crate::documents::ProjectHandle;
 use crate::error::{AppError, ErrorCode};
 use crate::registry::Registry;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 pub struct AppState {
     pub authorized: AuthorizedDirs,
@@ -13,7 +13,9 @@ pub struct AppState {
     /// a interface nunca informa caminhos de projeto.
     current: Mutex<Option<ProjectHandle>>,
     /// Serializa operações que alteram documentos (importar, remover).
-    pub write_lock: Mutex<()>,
+    pub write_lock: Arc<Mutex<()>>,
+    /// Estado do processamento de extração em segundo plano (Fase 3).
+    pub extraction: Arc<crate::extraction::ExtractionJob>,
 }
 
 impl AppState {
@@ -23,7 +25,8 @@ impl AppState {
             pending: PendingFiles::default(),
             registry: Registry::new(app_data_dir.join("app-registry.db")),
             current: Mutex::new(None),
-            write_lock: Mutex::new(()),
+            write_lock: Arc::new(Mutex::new(())),
+            extraction: Arc::new(crate::extraction::ExtractionJob::default()),
         }
     }
 

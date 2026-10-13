@@ -27,6 +27,11 @@ pub enum ErrorCode {
     Io,
     Database,
     Internal,
+    OcrUnavailable,
+    ExtractionFailed,
+    Busy,
+    /// Consulta de busca vazia ou com sintaxe inválida (Fase 4).
+    InvalidQuery,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
