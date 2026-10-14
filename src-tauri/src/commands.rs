@@ -2,6 +2,7 @@
 //! a interface não recebe plugins de sistema de arquivos.
 
 use crate::error::{AppError, ErrorCode};
+use crate::export::{self, ExportResult, ExportReview, ExportSelection};
 use crate::extraction::{self, OcrProvider};
 use crate::documents::{self, ProjectHandle, MAX_DOCUMENTS};
 use crate::models::{
@@ -54,6 +55,7 @@ pub fn pick_directory(
     let title = match purpose {
         PickPurpose::ProjectLocation => "Escolha onde o projeto será criado",
         PickPurpose::ProjectFolder => "Escolha a pasta do projeto",
+        PickPurpose::ExportDestination => "Escolha onde salvar a exportação de evidências",
     };
 
     let Some(picked) = app.dialog().file().set_title(title).blocking_pick_folder() else {
@@ -389,4 +391,44 @@ pub fn open_document_source(
             "O sistema não conseguiu abrir o arquivo. Verifique se há um aplicativo padrão para este tipo de arquivo.",
         )
     })
+}
+
+// ---------------------------------------------------------------------------
+// Fase 5: exportação de evidências (tudo local)
+// ---------------------------------------------------------------------------
+
+/// Etapa de revisão: trechos completos, referências e arquivos que seriam
+/// incluídos. Não grava nada.
+#[tauri::command(async)]
+pub fn prepare_export_review(
+    state: State<'_, AppState>,
+    project_id: String,
+    selection: ExportSelection,
+) -> Result<ExportReview, AppError> {
+    let project = state.current_for(&project_id)?;
+    export::prepare_review(&project, &selection)
+}
+
+/// Gera o pacote (relatório PDF, fontes verificadas e manifesto) em uma nova
+/// pasta dentro do destino autorizado. A interface envia somente os
+/// identificadores da seleção e o token da pasta escolhida no diálogo nativo.
+#[tauri::command(async)]
+pub fn export_evidence(
+    state: State<'_, AppState>,
+    project_id: String,
+    selection: ExportSelection,
+    destination_token: String,
+) -> Result<ExportResult, AppError> {
+    let project = state.current_for(&project_id)?;
+    let destination = state.authorized.resolve(&destination_token)?;
+    let _guard = state.export_lock.try_lock().map_err(|_| {
+        AppError::new(
+            ErrorCode::Busy,
+            "Já existe uma exportação em andamento. Aguarde a conclusão e tente novamente.",
+        )
+    })?;
+    let result = export::export_evidence(&project, &selection, &destination)?;
+    // A autorização da pasta vale para uma exportação concluída.
+    state.authorized.revoke(&destination_token);
+    Ok(result)
 }

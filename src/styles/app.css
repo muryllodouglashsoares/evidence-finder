@@ -239,8 +239,8 @@ ul { list-style: none; }
 
 .results { display: flex; flex-direction: column; gap: 12px; }
 .hits { display: flex; flex-direction: column; gap: 12px; }
-.hit { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
-.hit__head { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.hit { position: relative; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
+.hit__head { padding-left: 28px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .hit__doc { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hit__pos { color: var(--ink-soft); font-weight: 400; margin-right: 8px; font-size: 13px; }
 .hit__meta { display: flex; flex-wrap: wrap; gap: 2px 14px; align-items: center; font-size: 13px; color: var(--ink-soft); }
@@ -260,3 +260,22 @@ ul { list-style: none; }
 @media (max-width: 900px) {
   .filters__group--docs { grid-column: auto; }
 }
+
+/* Fase 5: seleção e exportação */
+.hit__select { position: absolute; left: 16px; top: 16px; display: flex; }
+.hit__select input { width: 16px; height: 16px; cursor: pointer; }
+.hit--selected { border-color: var(--accent); background: var(--accent-bg); color: var(--accent-ink); }
+.exportbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); position: sticky; top: 0; z-index: 1; }
+.exportbar .small { margin-right: auto; }
+.export__summary { display: flex; flex-direction: column; gap: 6px; margin: 0; }
+.export__summary > div { display: flex; gap: 12px; }
+.export__summary dt { font-weight: 600; min-width: 96px; }
+.export__summary dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.export__line { display: block; }
+.export__heading { font-size: 14px; margin: 4px 0 0; }
+.export__files { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.export__occurrences { max-height: 280px; overflow: auto; padding-left: 0; list-style: none; margin: 0; }
+.export__occ { border-left: 3px solid var(--line); padding-left: 10px; }
+.export__text { white-space: pre-wrap; overflow-wrap: anywhere; margin: 2px 0 0; }
+.export__dest { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.export__error, .export__done { display: flex; flex-direction: column; gap: 6px; }

@@ -32,6 +32,8 @@ pub enum ErrorCode {
     Busy,
     /// Consulta de busca vazia ou com sintaxe inválida (Fase 4).
     InvalidQuery,
+    /// Falha na exportação de evidências (Fase 5): nada foi publicado.
+    ExportFailed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

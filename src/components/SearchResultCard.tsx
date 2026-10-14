@@ -8,19 +8,37 @@ interface SearchResultCardProps {
   hit: SearchHit;
   showPosition: boolean;
   opening: boolean;
+  selected: boolean;
+  onToggleSelect: (hit: SearchHit) => void;
   onContext: (hit: SearchHit) => void;
   onOpenSource: (hit: SearchHit) => void;
 }
 
-export function SearchResultCard({ hit, showPosition, opening, onContext, onOpenSource }: SearchResultCardProps) {
+export function SearchResultCard({
+  hit,
+  showPosition,
+  opening,
+  selected,
+  onToggleSelect,
+  onContext,
+  onOpenSource,
+}: SearchResultCardProps) {
   const { document: doc } = hit;
   const confidence = confidenceText(hit);
   const cut = hit.previewCutStart || hit.previewCutEnd;
   const available = canOpenSource(hit);
 
   return (
-    <li className="hit">
+    <li className={selected ? "hit hit--selected" : "hit"}>
       <div className="hit__head">
+        <label className="hit__select" title="Incluir este resultado na exportação">
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={() => onToggleSelect(hit)}
+            aria-label={`Selecionar resultado de ${doc.name} para exportar`}
+          />
+        </label>
         <p className="hit__doc" title={doc.name}>
           {showPosition ? <span className="hit__pos">#{hit.position}</span> : null}
           {doc.name}

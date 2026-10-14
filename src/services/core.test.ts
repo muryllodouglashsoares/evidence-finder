@@ -86,4 +86,34 @@ describe("core service", () => {
       sort: "relevance",
     })).rejects.toMatchObject({ code: "INVALID_QUERY" });
   });
+
+  it("exportação: pede o destino ao diálogo nativo e envia só ids, consulta e token", async () => {
+    invokeMock.mockResolvedValue(null);
+    const selection = {
+      segmentIds: [3, 9],
+      query: "pagamento",
+      filters: { documentIds: [], formats: [], importedFrom: null, importedTo: null },
+    };
+    await core.pickDirectory("exportDestination");
+    await core.prepareExportReview("p1", selection);
+    await core.exportEvidence("p1", selection, "token-destino");
+    expect(invokeMock.mock.calls).toEqual([
+      ["pick_directory", { purpose: "exportDestination" }],
+      ["prepare_export_review", { projectId: "p1", selection }],
+      ["export_evidence", { projectId: "p1", selection, destinationToken: "token-destino" }],
+    ]);
+    // Nenhum campo de caminho trafega para o núcleo.
+    const sent = JSON.stringify(invokeMock.mock.calls.slice(1));
+    expect(sent).not.toMatch(/path|caminho|[A-Z]:\\\\/i);
+  });
+
+  it("exportação: erros do núcleo chegam tipados (falha, destino não autorizado, ocupado)", async () => {
+    for (const code of ["EXPORT_FAILED", "DIRECTORY_NOT_AUTHORIZED", "BUSY", "NOT_FOUND"]) {
+      invokeMock.mockRejectedValueOnce({ code, message: "x" });
+      await expect(
+        core.exportEvidence("p1", { segmentIds: [1], query: "a", filters: { documentIds: [], formats: [], importedFrom: null, importedTo: null } }, "t"),
+      ).rejects.toMatchObject({ code });
+    }
+  });
 });
+

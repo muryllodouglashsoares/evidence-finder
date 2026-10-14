@@ -1,7 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { useSearch } from "../hooks/useSearch";
 import { FORMAT_LABEL } from "../lib/documents";
+import {
+  canReview,
+  discardedNotice,
+  EMPTY_SELECTION,
+  isSelected,
+  MAX_EXPORT_SELECTION,
+  selectionReducer,
+  selectionScope,
+  unselected,
+} from "../lib/export";
 import {
   buildSearchRequest,
   clearFilters,
@@ -18,6 +28,7 @@ import type { SearchForm } from "../lib/search";
 import { core, normalizeError } from "../services/core";
 import type { DocFormat, DocumentInfo, SearchHit, SearchSort } from "../types/contracts";
 import { ContextDialog } from "./ContextDialog";
+import { ExportDialog } from "./ExportDialog";
 import { SearchResultCard } from "./SearchResultCard";
 import type { Notice } from "./StatusMessage";
 
@@ -49,11 +60,25 @@ export function SearchPanel({
   const [formError, setFormError] = useState<string | null>(null);
   const [contextHit, setContextHit] = useState<SearchHit | null>(null);
   const [openingId, setOpeningId] = useState<string | null>(null);
+  const [selection, dispatchSelection] = useReducer(selectionReducer, EMPTY_SELECTION);
+  const [exportOpen, setExportOpen] = useState(false);
 
   const index = useMemo(() => summarizeIndex(documents), [documents]);
   const existingIds = useMemo(() => new Set(documents.map((d) => d.id)), [documents]);
   const signature = useMemo(() => documentsSignature(documents), [documents]);
   const filtersOn = hasActiveFilters(form);
+
+  // Filtros efetivamente aplicados à pesquisa exibida (os mesmos enviados ao núcleo).
+  const activeFilters = useMemo(
+    () => buildSearchRequest({ ...form, query: committed ?? "" }, 0, existingIds).filters,
+    [form, committed, existingIds],
+  );
+  // A seleção pertence a UMA pesquisa: se consulta, filtros ou documentos mudam, ela é descartada.
+  const scope = selectionScope(committed, activeFilters, signature);
+  useEffect(() => {
+    dispatchSelection({ type: "rescope", scope });
+    setExportOpen(false);
+  }, [scope]);
 
   const execute = useCallback(
     (next: SearchForm, text: string, offset = 0) => {
@@ -103,6 +128,7 @@ export function SearchPanel({
   }
 
   function clearAll() {
+    dispatchSelection({ type: "clear" });
     setForm(EMPTY_FORM);
     setCommitted(null);
     setFormError(null);
@@ -355,6 +381,44 @@ export function SearchPanel({
                 {plural(state.documentCount, "documento", "documentos")}
                 {state.hasMore ? ` — mostrando ${state.results.length.toLocaleString("pt-BR")}` : ""}.
               </p>
+              {selection.discarded > 0 ? (
+                <p className="small extract__warn" role="status">
+                  {discardedNotice(selection.discarded)}{" "}
+                  <button type="button" className="btn btn--small btn--quiet" onClick={() => dispatchSelection({ type: "dismissNotice" })}>
+                    Entendi
+                  </button>
+                </p>
+              ) : null}
+              <div className="exportbar" role="group" aria-label="Seleção para exportação">
+                <span className="small" aria-live="polite">
+                  <strong>{plural(selection.items.length, "resultado selecionado", "resultados selecionados")}</strong>
+                  {selection.limitReached ? ` — limite de ${MAX_EXPORT_SELECTION} por exportação` : ""}
+                </span>
+                <button
+                  type="button"
+                  className="btn btn--small"
+                  onClick={() => dispatchSelection({ type: "selectMany", hits: state.results })}
+                  disabled={unselected(selection, state.results).length === 0}
+                >
+                  Selecionar os {state.results.length.toLocaleString("pt-BR")} exibidos
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--small"
+                  onClick={() => dispatchSelection({ type: "clear" })}
+                  disabled={selection.items.length === 0}
+                >
+                  Limpar seleção
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--small btn--primary"
+                  onClick={() => setExportOpen(true)}
+                  disabled={!canReview(selection)}
+                >
+                  Revisar e exportar
+                </button>
+              </div>
               <ul className="hits">
                 {state.results.map((hit) => (
                   <SearchResultCard
@@ -362,6 +426,8 @@ export function SearchPanel({
                     hit={hit}
                     showPosition={showPosition}
                     opening={openingId === hit.document.id}
+                    selected={isSelected(selection, hit.segmentId)}
+                    onToggleSelect={(h) => dispatchSelection({ type: "toggle", hit: h })}
                     onContext={setContextHit}
                     onOpenSource={(h) => void openSource(h)}
                   />
@@ -381,6 +447,24 @@ export function SearchPanel({
           )
         ) : null}
       </div>
+
+      <ExportDialog
+        open={exportOpen && committed !== null}
+        projectId={projectId}
+        query={committed ?? ""}
+        filters={activeFilters}
+        items={selection.items}
+        onClose={() => setExportOpen(false)}
+        onExported={(folderName, warnings) =>
+          onNotice({
+            kind: warnings > 0 ? "warning" : "success",
+            text:
+              warnings > 0
+                ? `Exportação criada em "${folderName}" com ${warnings} aviso(s): algumas fontes não foram incluídas.`
+                : `Exportação concluída: pasta "${folderName}".`,
+          })
+        }
+      />
 
       <ContextDialog
         projectId={projectId}

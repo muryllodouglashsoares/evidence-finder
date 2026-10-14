@@ -16,6 +16,9 @@ pub struct AppState {
     pub write_lock: Arc<Mutex<()>>,
     /// Estado do processamento de extração em segundo plano (Fase 3).
     pub extraction: Arc<crate::extraction::ExtractionJob>,
+    /// Impede duas exportações simultâneas (Fase 5). Não bloqueia importação nem
+    /// busca: a exportação trabalha sobre um instantâneo lido de uma só vez.
+    pub export_lock: Mutex<()>,
 }
 
 impl AppState {
@@ -27,6 +30,7 @@ impl AppState {
             current: Mutex::new(None),
             write_lock: Arc::new(Mutex::new(())),
             extraction: Arc::new(crate::extraction::ExtractionJob::default()),
+            export_lock: Mutex::new(()),
         }
     }
 

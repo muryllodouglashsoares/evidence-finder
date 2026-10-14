@@ -8,6 +8,9 @@ import type {
   DocumentInfo,
   DocumentList,
   ErrorCode,
+  ExportResult,
+  ExportReview,
+  ExportSelection,
   ExtractionProgress,
   ImportResult,
   OcrStatus,
@@ -131,4 +134,15 @@ export const core = {
   /** Abre o documento original no aplicativo padrão. A interface envia só o identificador. */
   openDocumentSource: (projectId: string, documentId: string) =>
     call<void>("open_document_source", { projectId, documentId }),
+
+  // --- Fase 5: exportação. A interface envia identificadores e o token da pasta escolhida
+  // no diálogo nativo (purpose "exportDestination"); nunca caminhos. ---
+
+  /** Revisão: trechos completos, referências e arquivos que seriam incluídos. Não grava nada. */
+  prepareExportReview: (projectId: string, selection: ExportSelection) =>
+    call<ExportReview>("prepare_export_review", { projectId, selection }),
+
+  /** Gera o pacote (PDF, fontes verificadas e manifesto) em uma nova pasta do destino autorizado. */
+  exportEvidence: (projectId: string, selection: ExportSelection, destinationToken: string) =>
+    call<ExportResult>("export_evidence", { projectId, selection, destinationToken }),
 };

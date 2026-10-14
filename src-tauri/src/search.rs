@@ -20,7 +20,7 @@ use crate::models::{Availability, ExtractionMethod, StorageMode};
 use rusqlite::types::Value;
 use rusqlite::{params, params_from_iter, Connection};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub const MAX_QUERY_CHARS: usize = 200;
 pub const MAX_TERMS: usize = 16;
@@ -574,6 +574,44 @@ pub fn search(project: &ProjectHandle, request: &SearchRequest) -> Result<Search
         has_more: (offset as u64 + results.len() as u64) < total as u64,
         results,
     })
+}
+
+/// Entre `segment_ids`, os trechos que pertencem ao projeto E correspondem à
+/// consulta e aos filtros informados (a mesma regra da busca). Usada pela
+/// exportação (Fase 5) para recusar seleções que não pertencem mais à pesquisa
+/// exibida. O chamador deve ter chamado `ensure_index` antes.
+pub(crate) fn matching_segment_ids(
+    conn: &Connection,
+    project_id: &str,
+    query: &str,
+    filters: &SearchFilters,
+    segment_ids: &[i64],
+) -> Result<HashSet<i64>, AppError> {
+    if segment_ids.is_empty() {
+        return Ok(HashSet::new());
+    }
+    let match_expr = build_match(query)?;
+    let w = build_where(project_id, &match_expr, filters)?;
+    let mut params = w.params.clone();
+    let marks: Vec<String> = segment_ids
+        .iter()
+        .map(|id| {
+            params.push(Value::Integer(*id));
+            format!("?{}", params.len())
+        })
+        .collect();
+    let sql = format!(
+        "SELECT s.id {FROM_JOIN} WHERE {} AND s.id IN ({})",
+        w.sql,
+        marks.join(",")
+    );
+    let mut stmt = conn.prepare(&sql).map_err(map_sql)?;
+    let mut rows = stmt.query(params_from_iter(params.iter())).map_err(map_sql)?;
+    let mut found = HashSet::new();
+    while let Some(r) = rows.next().map_err(map_sql)? {
+        found.insert(r.get::<_, i64>(0)?);
+    }
+    Ok(found)
 }
 
 // ---------------------------------------------------------------------------

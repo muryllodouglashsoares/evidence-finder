@@ -2,7 +2,7 @@
 
 Aplicação desktop para Windows, **100% local**, para pesquisar informações em capturas de tela, imagens, conversas em texto, arquivos TXT e PDFs.
 
-> **Esta é a Fase 4 (busca e análise dos resultados) e NÃO representa o produto completo.** O aplicativo cria projetos, importa documentos, extrai o texto localmente e agora permite **pesquisar** esse texto (SQLite FTS5), filtrar, ver o contexto de cada trecho e abrir o documento original. **Exportação de evidências (PDF, pasta, manifesto), busca semântica/IA e o endurecimento final de segurança ainda não existem.**
+> **Esta é a Fase 5 (exportação de evidências) e NÃO representa o produto completo.** O aplicativo cria projetos, importa documentos, extrai o texto localmente, permite **pesquisar** esse texto (SQLite FTS5) e agora **exporta** os resultados selecionados em um pacote local (relatório PDF, fontes verificadas e `manifest.json`). **Busca semântica/IA e o endurecimento final de segurança ainda não existem, e a Fase 5 ainda não foi validada em um Windows real (veja "Limitações da Fase 5").**
 
 ## Objetivo
 
@@ -10,7 +10,7 @@ Permitir que a pessoa reúna material em projetos locais (até ~500 arquivos por
 
 Princípios: privacidade, rastreabilidade das fontes, confiabilidade e funcionamento offline.
 
-## Estado atual (Fase 4)
+## Estado atual (Fase 5)
 
 | Funcionalidade | Estado |
 | --- | --- |
@@ -30,7 +30,7 @@ Princípios: privacidade, rastreabilidade das fontes, confiabilidade e funcionam
 | Busca lexical local (SQLite FTS5): palavras, frase exata, combinação de termos, ordenada por relevância | Implementado (Fase 4) |
 | Filtros (documento, formato, período de importação) e ordenação, aplicados no núcleo | Implementado (Fase 4) |
 | Contexto do trecho (vizinhos do mesmo documento) e abertura segura do original | Implementado (Fase 4) |
-| Exportação de evidências (PDF, pasta, `manifest.json`) | **Não implementado** (Fase 5) |
+| Seleção de resultados, revisão, relatório PDF, pasta de evidências com fontes verificadas por SHA-256 e `manifest.json` | Implementado (Fase 5; pendente de validação no Windows) |
 | Busca semântica / IA local | **Não implementado** (Fase 7) |
 
 ## Como importar documentos
@@ -67,7 +67,7 @@ A lista de projetos recentes fica em `app-registry.db`, na pasta de dados do apl
 
 - Tauri 2 (casca desktop) + `tauri-plugin-dialog` (usado só pelo lado Rust)
 - React 19 + TypeScript em modo estrito + Vite
-- Rust (núcleo): `rusqlite` (SQLite embutido), `serde`, `uuid`, `chrono`, `dunce`, `sha2` (SHA-256 local, Rust puro), `lopdf` (leitura de PDF, Rust puro, MIT), `encoding_rs` (decodificação de TXT)
+- Rust (núcleo): `rusqlite` (SQLite embutido), `serde`, `uuid`, `chrono`, `dunce`, `sha2` (SHA-256 local, Rust puro), `lopdf` (leitura de PDF, Rust puro, MIT), `encoding_rs` (decodificação de TXT); Fase 5: `flate2` e `ttf-parser` (geração do PDF) e as fontes DejaVu Sans (ver "Exportação de evidências")
 - Testes: Vitest (frontend) e `cargo test` (núcleo); lint com ESLint
 
 Nenhum serviço pago, conta externa, telemetria ou API de IA.
@@ -109,7 +109,7 @@ npm run test:rust      # cargo test (núcleo: criação, abertura, persistência
 npm run check          # todos os anteriores
 ```
 
-Os testes Rust (125: 105 das fases anteriores + 20 da Fase 4) cobrem, além da Fase 1: importação de PNG/JPEG/TXT/PDF nas duas modalidades, texto colado, lotes com falhas individuais, persistência após reabrir, duplicatas, arquivos inexistentes/sem permissão, falhas de cópia, nomes e caminhos maliciosos (banco adulterado, pasta `files` substituída por arquivo ou atalho), remoção sem tocar nos originais, limite de 500, integridade das cópias, arquivos modificados e migração v1→v2 preservando dados. Os da Fase 3 cobrem decodificação e segmentação de texto, PDF com páginas, PDF digitalizado com OCR real (JPEG, Flate cinza e 1 bit), PNG/JPEG com e sem texto, dependência de OCR ausente, arquivos corrompidos, falha individual sem interromper o lote, reprocessamento sem duplicar, detecção de arquivo alterado por hash, extrator desatualizado, persistência após reabrir, remoção em cascata, migração v2→v3 e limites. Os testes de OCR real são pulados (com aviso em stderr) se o Tesseract com idioma `por` não estiver instalado; os demais rodam sempre. Os da Fase 4 cobrem a montagem segura da consulta, busca por palavra/frase/combinação, acentos e maiúsculas, caracteres especiais e operadores, ordenação por relevância, prévia e destaque, filtros combinados, paginação, isolamento entre projetos, contexto, migração de um projeto da Fase 3 (v3→v4) sem reimportar, ausência de duplicação ao reprocessar, remoção em cascata no índice, recuperação de um índice interrompido, consistência ao reabrir e a validação da abertura da fonte (ausente, alterada, outro projeto, extensão adulterada). Os testes do front (Vitest) cobrem contratos com o núcleo (só ids/tokens, nunca caminhos), validação da consulta, filtros, descrição da origem e o redutor que descarta respostas obsoletas.
+Os testes Rust (164: 125 das fases anteriores + 39 da Fase 5) cobrem, além da Fase 1: importação de PNG/JPEG/TXT/PDF nas duas modalidades, texto colado, lotes com falhas individuais, persistência após reabrir, duplicatas, arquivos inexistentes/sem permissão, falhas de cópia, nomes e caminhos maliciosos (banco adulterado, pasta `files` substituída por arquivo ou atalho), remoção sem tocar nos originais, limite de 500, integridade das cópias, arquivos modificados e migração v1→v2 preservando dados. Os da Fase 3 cobrem decodificação e segmentação de texto, PDF com páginas, PDF digitalizado com OCR real (JPEG, Flate cinza e 1 bit), PNG/JPEG com e sem texto, dependência de OCR ausente, arquivos corrompidos, falha individual sem interromper o lote, reprocessamento sem duplicar, detecção de arquivo alterado por hash, extrator desatualizado, persistência após reabrir, remoção em cascata, migração v2→v3 e limites. Os testes de OCR real são pulados (com aviso em stderr) se o Tesseract com idioma `por` não estiver instalado; os demais rodam sempre. Os da Fase 4 cobrem a montagem segura da consulta, busca por palavra/frase/combinação, acentos e maiúsculas, caracteres especiais e operadores, ordenação por relevância, prévia e destaque, filtros combinados, paginação, isolamento entre projetos, contexto, migração de um projeto da Fase 3 (v3→v4) sem reimportar, ausência de duplicação ao reprocessar, remoção em cascata no índice, recuperação de um índice interrompido, consistência ao reabrir e a validação da abertura da fonte (ausente, alterada, outro projeto, extensão adulterada). Os testes do front (Vitest) cobrem contratos com o núcleo (só ids/tokens, nunca caminhos), validação da consulta, filtros, descrição da origem e o redutor que descarta respostas obsoletas. Os da Fase 5 estão descritos em "Exportação de evidências".
 
 ## Build
 
@@ -223,6 +223,71 @@ Maiúsculas, minúsculas e acentos são ignorados (`transferencia` encontra `tra
 
 **Limitações da Fase 4:** sem busca por prefixo/radical, sinônimos, erros de digitação ou significado (a busca semântica é de fase futura); texto de OCR com erros pode não casar com a consulta (confira a confiança e o original); a busca é feita sobre trechos de até ~1200 caracteres, então termos separados por mais de um trecho não se combinam; sem exportação das evidências; abrir o original depende de haver um aplicativo padrão para o tipo de arquivo; **a interface e a abertura de arquivos no Windows não foram testadas em um Windows real** (testes executados em Linux).
 
+## Exportação de evidências (Fase 5)
+
+### Como usar
+
+1. Em **Pesquisar**, faça a busca e marque a caixa de cada resultado que deseja exportar (ou use **Selecionar os N exibidos**). A barra acima da lista mostra quantos estão selecionados e permite **Limpar seleção**. Nada é exportado automaticamente: só o que foi marcado.
+2. **Revisar e exportar** abre a revisão, montada pelo núcleo: consulta e filtros, documentos de origem, **trechos completos** com suas referências (página, linhas, posição, região, método de extração, confiança do OCR quando existe) e os arquivos que serão copiados, com o nome que terão em `evidencias/`. Fontes que já aparecem como ausentes/alteradas ficam destacadas.
+3. **Escolher pasta de destino** abre o diálogo nativo (controlado pelo Rust). **Exportar** cria, dentro dela, uma pasta nova `EvidenceFinder-Exportacao-AAAAMMDD-HHMMSS` (se o nome já existir, acrescenta `-2`, `-3`…; nunca sobrescreve).
+
+**Seleção e pesquisa.** A seleção pertence a uma pesquisa (consulta + filtros + estado dos documentos). Se qualquer um deles mudar, a seleção é descartada e a tela avisa quantos itens foram descartados; alterar só a ordenação preserva a seleção. O núcleo confere de novo: cada trecho precisa existir no projeto aberto **e** ainda corresponder à consulta e aos filtros enviados; caso contrário a exportação é recusada. Limite: 500 ocorrências por exportação.
+
+### Estrutura do pacote
+
+```
+EvidenceFinder-Exportacao-20261014-112037/
+├── relatorio.pdf
+├── manifest.json
+└── evidencias/
+    ├── arquivo_001.txt
+    ├── arquivo_002.pdf
+    └── arquivo_003.png
+```
+
+- Um arquivo de origem é copiado **uma única vez**, mesmo com várias ocorrências; cada ocorrência continua identificada no PDF (`Ocorrência 001`, `002`…) e no manifesto (`occurrenceId`, `segmentId`). Os nomes em `evidencias/` são gerados pelo sistema (`arquivo_NNN` + extensão do formato), nunca a partir do nome original (que fica no manifesto), então não há colisão nem travessia de diretório.
+- **`relatorio.pdf`** (A4, numeração "Página i de N"): capa com projeto, ID da exportação, data/hora local, consulta, filtros e contagens; uma seção por ocorrência com documento, arquivo exportado, SHA-256, localização, método e motor de extração. Caixas **azuis** = metadados produzidos pelo sistema; caixas **cinzas** = texto extraído da fonte, literal; caixas **âmbar** = avisos (fonte não incluída, caracteres sem glifo). Acentos e Unicode usam fontes embutidas; textos longos são quebrados por largura real (palavras gigantes por caractere) e continuam entre páginas, sem corte.
+- **`manifest.json`** (UTF-8, `schemaVersion` 1): projeto, consulta, filtros, `exportId`, datas (UTC e local), referência ao relatório (nome, SHA-256, tamanho), `occurrences[]` (segmento, documento, nome original, arquivo exportado, hash da fonte **verificado**, localização, método, motor, confiança de OCR, tamanho e SHA-256 do texto), `files[]` (hash registrado × hash verificado, estado, ocorrências) e `statements[]`. Não inclui o texto integral, caminhos absolutos nem dados do ambiente.
+
+### Hashes: o que significam e o que não significam
+
+Ao exportar, cada fonte é lida **uma vez** (somente leitura): os mesmos bytes que são gravados em `evidencias/` alimentam o SHA-256, que é comparado com o hash e o tamanho registrados na importação. Só se conferir o arquivo é incluído e o hash aparece como "verificado". O hash mostra que **aquele conteúdo** é idêntico ao que foi importado; **não comprova autenticidade, autoria, data de criação nem cadeia de custódia formal**. Correspondência textual e OCR também não confirmam fatos. Relatório e manifesto dizem isso e **registram a operação realizada**, nada além.
+
+### Avisos para fontes indisponíveis ou alteradas
+
+- **Ausente, movida ou apagada** · **conteúdo alterado desde a importação** (referência) · **cópia do projeto danificada** · **sem permissão/falha de leitura**: o arquivo **não** é copiado nem apresentado como fonte válida. A ocorrência continua no relatório e no manifesto com o estado (`missing`, `modified`, `corrupted`, `inaccessible`), hash apenas "registrado, NÃO verificado" e um aviso; ao terminar, a tela lista os itens afetados.
+- Se **nenhuma** fonte puder ser incluída, a exportação falha e nada é publicado.
+- Caracteres sem glifo na fonte do relatório (por exemplo, japonês) são desenhados como "�" com aviso na ocorrência; o texto original permanece no projeto.
+
+### Segurança e confiabilidade
+
+- A interface envia só identificadores de trechos, a consulta/filtros e o **token** da pasta escolhida no diálogo nativo; nunca caminhos. Origem dos arquivos vem do banco do projeto; o destino é revalidado (canônico, existente, fora da área gerenciada `files/` do projeto).
+- O pacote é montado em uma pasta temporária (`.EvidenceFinder-temp-*`) no destino e **renomeado** para o nome final só no fim; falhas removem apenas o que a operação criou. Duas exportações simultâneas são recusadas (`BUSY`); importar/buscar continuam livres porque a exportação trabalha sobre um instantâneo lido de uma só vez.
+- Sem shell, sem rede, sem logs de conteúdo ou caminhos. Originais e cópias gerenciadas nunca são modificados.
+
+### Bibliotecas e licenças adicionadas
+
+| Componente | Uso | Licença |
+|---|---|---|
+| `flate2` 1.x (backend Rust puro) | compressão dos fluxos do PDF (já era dependência transitiva do `lopdf`) | MIT OR Apache-2.0 |
+| `ttf-parser` 0.25 | mapa de caracteres e larguras da fonte | MIT OR Apache-2.0 |
+| DejaVu Sans / Sans Bold (`src-tauri/assets/fonts/`) | fonte embutida no executável e no PDF | Bitstream Vera/DejaVu (permissiva; texto em `LICENSE-DejaVu.txt`) |
+
+O PDF é escrito diretamente pelo módulo `pdf_report.rs`; não há serviço de conversão nem biblioteca de documentos de terceiros.
+
+### Testes da Fase 5
+
+- **Rust (39 novos):** uma ocorrência; várias do mesmo documento (arquivo único); documentos diferentes e nomes iguais; validade e conteúdo do manifesto (sem texto integral nem caminhos); Unicode e trechos longos relidos do próprio PDF pelos mapas `ToUnicode`; paginação e numeração; texto hostil tratado só como dado; documento ausente, alterado (mesmo tamanho), cópia adulterada, não-arquivo e sem permissão; falha total sem publicar nada; ids inexistentes/inválidos/duplicados/de outro projeto/de documento removido; seleção que não corresponde mais à consulta ou filtros; token inválido e destinos inválidos (inexistente, arquivo, área gerenciada); pasta de destino já existente (sem sobrescrita); falhas injetadas em cada etapa (cópia, relatório, manifesto, publicação) sem sobras e sem tocar em arquivos preexistentes; originais preservados byte a byte; hash registrado = hash dos bytes exportados; revisão com texto completo; bloqueio de exportações simultâneas.
+- **Frontend (Vitest, 16 novos + 2 de contrato):** seleção/desmarcação por id de trecho, contagem, limite, escopo da pesquisa e descarte de seleção desatualizada, revisão, prevenção de exportação vazia/sem destino, carregamento/sucesso/falha/nova tentativa e chamadas aos comandos Rust (só ids e tokens).
+
+### Limitações da Fase 5
+
+- **Não validada em Windows real:** o diálogo de pasta, caminhos do Windows (OneDrive, rede, caminhos longos) e o instalador NSIS não foram exercitados; a interface (diálogo de revisão) foi verificada por tipos, lint e testes da lógica, **sem testes de renderização de componentes** (a suíte atual não os tem) e sem uso manual. O PDF foi conferido em imagem (poppler, Linux), não em Acrobat/Edge.
+- Se o aplicativo for encerrado à força durante a exportação, pode restar a pasta `.EvidenceFinder-temp-*` no destino (incompleta, nunca com nome final; pode ser apagada). A publicação por renomeação verifica antes se o nome existe; no Linux/macOS há uma janela mínima entre verificar e renomear.
+- O relatório usa DejaVu Sans (latim, grego, cirílico e símbolos comuns); CJK, emoji e escritas não cobertas viram "�". O PDF embute as fontes completas (~750 KB).
+- Fontes de documentos exportados em modo "referência" são lidas do caminho registrado no momento da exportação; o hash é a única garantia de que são as mesmas importadas.
+- Sem pré-visualização do PDF no aplicativo e sem botão para abrir a pasta criada (o caminho é exibido).
+
 ## Próxima fase (não iniciada)
 
-**Fase 5 — exportação de evidências:** seleção de resultados, relatório PDF, pasta de evidências e `manifest.json`, reutilizando os identificadores de trecho e as referências à fonte que a busca já devolve. Nada disso existe ainda.
+**Fase 6 — segurança e confiabilidade:** revisão das permissões, arquivos temporários, logs e testes com a rede bloqueada. Antes dela, a Fase 5 precisa ser validada em um Windows real (ver "Limitações da Fase 5").

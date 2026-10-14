@@ -48,6 +48,8 @@ pub struct DirectorySelection {
 pub enum PickPurpose {
     ProjectLocation,
     ProjectFolder,
+    /// Pasta onde a exportação de evidências (Fase 5) criará o pacote.
+    ExportDestination,
 }
 
 // ---------------------------------------------------------------------------

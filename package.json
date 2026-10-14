@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Evidence Finder — pesquisa local em evidências (Fase 4: busca e análise)",
+  "description": "Evidence Finder — pesquisa local em evidências (Fase 5: exportação de evidências)",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

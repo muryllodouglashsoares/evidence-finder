@@ -1,7 +1,7 @@
 [package]
 name = "evidence-finder"
 version = "0.1.0"
-description = "Evidence Finder — pesquisa local em evidências (Fase 4: busca e análise)"
+description = "Evidence Finder — pesquisa local em evidências (Fase 5: exportação de evidências)"
 edition = "2021"
 rust-version = "1.77.2"
 publish = false
@@ -28,6 +28,12 @@ sha2 = "0.10"
 encoding_rs = "0.8"
 # Leitura de PDF em Rust puro (MIT), sem rayon/chrono/time/jiff.
 lopdf = { version = "0.36", default-features = false }
+# Fase 5 (exportação): relatório PDF gerado localmente, em Rust puro.
+# `flate2` (MIT/Apache-2.0) comprime os fluxos do PDF; já era dependência
+# transitiva do `lopdf`. `ttf-parser` (MIT/Apache-2.0, sem dependências) lê
+# mapa de caracteres e larguras da fonte embutida (DejaVu, ver assets/fonts).
+flate2 = "1"
+ttf-parser = { version = "0.25", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 tempfile = "3"

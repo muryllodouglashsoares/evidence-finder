@@ -1,4 +1,5 @@
-//! Núcleo local do Evidence Finder (Fases 1–4: fundação, documentos, extração e busca).
+//! Núcleo local do Evidence Finder (Fases 1–5: fundação, documentos, extração, busca e
+//! exportação de evidências).
 //!
 //! Tudo ocorre na máquina do usuário: sem rede, sem telemetria, sem serviços
 //! externos. A interface só se comunica com este núcleo pelos comandos de
@@ -11,11 +12,13 @@ pub mod docformat;
 pub mod docstore;
 pub mod documents;
 pub mod error;
+pub mod export;
 pub mod extraction;
 pub mod extraction_store;
 pub mod models;
 pub mod ocr;
 pub mod pdf_extract;
+pub mod pdf_report;
 pub mod paths;
 pub mod registry;
 pub mod search;
@@ -57,6 +60,8 @@ pub fn run() {
             commands::search_segments,
             commands::get_segment_context,
             commands::open_document_source,
+            commands::prepare_export_review,
+            commands::export_evidence,
         ])
         .run(tauri::generate_context!())
         .expect("falha ao iniciar o Evidence Finder");

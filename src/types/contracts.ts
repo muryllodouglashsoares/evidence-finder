@@ -24,6 +24,7 @@ export type ErrorCode =
   | "EXTRACTION_FAILED"
   | "BUSY"
   | "INVALID_QUERY"
+  | "EXPORT_FAILED"
   | "CORE_UNAVAILABLE";
 
 export interface CoreErrorPayload {
@@ -31,7 +32,7 @@ export interface CoreErrorPayload {
   message: string;
 }
 
-export type PickPurpose = "projectLocation" | "projectFolder";
+export type PickPurpose = "projectLocation" | "projectFolder" | "exportDestination";
 
 export interface DirectorySelection {
   /** Token opaco que autoriza operações na pasta escolhida (válido nesta sessão). */
@@ -255,4 +256,80 @@ export interface SegmentContext {
   segments: ContextSegment[];
   moreBefore: boolean;
   moreAfter: boolean;
+}
+
+// --- Fase 5: exportação de evidências ---
+
+/** Seleção enviada ao núcleo: identificadores estáveis de trechos e a pesquisa que os produziu. */
+export interface ExportSelection {
+  segmentIds: number[];
+  query: string;
+  filters: SearchFilters;
+}
+
+export interface FilterDocument {
+  id: string;
+  name: string;
+}
+
+/** Filtros da pesquisa, descritos pelo núcleo (nomes resolvidos no projeto). */
+export interface FilterSummary {
+  documents: FilterDocument[];
+  formats: DocFormat[];
+  importedFrom: string | null;
+  importedTo: string | null;
+}
+
+export interface ReviewOccurrence extends SegmentLocation {
+  number: number;
+  segmentId: number;
+  documentId: string;
+  documentName: string;
+  format: DocFormat;
+  /** Trecho completo. */
+  text: string;
+  textLength: number;
+}
+
+export interface ReviewFile {
+  documentId: string;
+  name: string;
+  format: DocFormat;
+  sizeBytes: number;
+  storageMode: StorageMode;
+  /** Nome que o arquivo terá em `evidencias/`. */
+  exportedName: string;
+  occurrenceCount: number;
+  /** Verificação rápida; o hash é conferido por inteiro ao exportar. */
+  availability: Availability;
+}
+
+export interface ExportReview {
+  query: string;
+  filters: FilterSummary;
+  occurrences: ReviewOccurrence[];
+  files: ReviewFile[];
+}
+
+export type ExportFileStatus = "exported" | "missing" | "modified" | "corrupted" | "inaccessible";
+
+export interface ExportFileResult {
+  documentId: string;
+  name: string;
+  exportedName: string | null;
+  status: ExportFileStatus;
+  message: string | null;
+  occurrenceCount: number;
+}
+
+export interface ExportResult {
+  exportId: string;
+  folderName: string;
+  /** Apenas para exibição. */
+  folderPath: string;
+  occurrenceCount: number;
+  documentCount: number;
+  exportedFiles: number;
+  files: ExportFileResult[];
+  warnings: string[];
 }
