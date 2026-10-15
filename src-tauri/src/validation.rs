@@ -24,6 +24,16 @@ pub(crate) fn is_invisible_formatting(c: char) -> bool {
     )
 }
 
+/// Identificadores (projeto, documento, token) são UUIDs gerados pelo núcleo.
+/// Qualquer outra coisa é recusada antes de chegar ao banco ou ao disco.
+pub fn validate_id(value: &str) -> Result<(), AppError> {
+    if value.len() <= 64 && !value.is_empty() && value.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        Ok(())
+    } else {
+        Err(AppError::new(ErrorCode::NotFound, "Identificador inválido."))
+    }
+}
+
 /// Valida o nome do projeto, que também é usado como nome da pasta no disco.
 /// Retorna o nome normalizado (sem espaços nas pontas).
 pub fn validate_project_name(raw: &str) -> Result<String, AppError> {

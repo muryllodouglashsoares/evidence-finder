@@ -6,12 +6,15 @@ import type {
   DocFormat,
   DocumentInfo,
   ErrorCode,
+  MatchKind,
   SearchFilters,
   SearchHit,
+  SearchMode,
   SearchRequest,
   SearchResponse,
   SearchSort,
   SegmentLocation,
+  SemanticCoverage,
 } from "../types/contracts";
 
 export const MAX_QUERY_CHARS = 200;
@@ -21,6 +24,25 @@ export const LOW_OCR_CONFIDENCE = 60;
 export const SORT_LABEL: Record<SearchSort, string> = {
   relevance: "Relevância",
   document: "Documento e posição",
+};
+
+export const MODE_LABEL: Record<SearchMode, string> = {
+  lexical: "Exata",
+  semantic: "Por significado",
+  hybrid: "Híbrida",
+};
+
+export const MODE_HELP: Record<SearchMode, string> = {
+  lexical: "Palavras e frases exatas (entre aspas). Mostra só trechos que contêm os termos.",
+  semantic:
+    "Descreva o que procura com suas palavras. Encontra trechos de significado parecido, mesmo sem os mesmos termos. Aspas e operadores são ignorados.",
+  hybrid: "Combina a busca exata com a de significado. Trechos com os termos literais nunca são descartados.",
+};
+
+export const MATCH_KIND_LABEL: Record<MatchKind, string> = {
+  lexical: "Literal",
+  semantic: "Semântica",
+  both: "Literal + semântica",
 };
 
 export const SEARCH_FORMATS: DocFormat[] = ["pdf", "png", "jpeg", "txt"];
@@ -33,6 +55,7 @@ export interface SearchForm {
   dateFrom: string;
   dateTo: string;
   sort: SearchSort;
+  mode: SearchMode;
 }
 
 export const EMPTY_FORM: SearchForm = {
@@ -42,6 +65,7 @@ export const EMPTY_FORM: SearchForm = {
   dateFrom: "",
   dateTo: "",
   sort: "relevance",
+  mode: "lexical",
 };
 
 export function hasActiveFilters(form: SearchForm): boolean {
@@ -58,14 +82,15 @@ export function clearFilters(form: SearchForm): SearchForm {
 }
 
 /** Validação básica antes de chamar o núcleo (que valida de novo). `null` = válida. */
-export function validateQuery(raw: string): string | null {
+export function validateQuery(raw: string, mode: SearchMode = "lexical"): string | null {
   const text = raw.trim();
   if (text === "") return "Digite ao menos uma palavra para pesquisar.";
   if ([...text].length > MAX_QUERY_CHARS) {
     return `A consulta é longa demais (máximo de ${MAX_QUERY_CHARS} caracteres).`;
   }
+  // Na busca semântica pura não há operadores: aspas viram espaços no núcleo.
   const quotes = [...text].filter((c) => /["“”„‟«»]/.test(c)).length;
-  if (quotes % 2 !== 0) {
+  if (mode !== "semantic" && quotes % 2 !== 0) {
     return 'Há aspas sem fechamento. Feche a expressão exata com outra aspa (").';
   }
   if (!/[\p{L}\p{N}]/u.test(text)) return "Digite ao menos uma palavra para pesquisar.";
@@ -103,8 +128,19 @@ export function buildSearchRequest(
     sort: form.sort,
     limit: PAGE_SIZE,
     offset,
+    // Omitido = lexical (o núcleo assume lexical): pedidos antigos continuam idênticos.
+    ...(form.mode !== "lexical" ? { mode: form.mode } : {}),
   };
 }
+
+/** Indicador técnico de similaridade, nunca apresentado como probabilidade. */
+export function scoreText(hit: Pick<SearchHit, "semanticScore">): string | null {
+  if (hit.semanticScore === null || hit.semanticScore === undefined) return null;
+  return `similaridade ${hit.semanticScore.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+export const SCORE_EXPLANATION =
+  "Similaridade entre a consulta e o trecho (de 0 a 1). É um indicador técnico de proximidade de significado: não é probabilidade nem confirma que o fato ocorreu.";
 
 /** `true` quando o período está invertido (início depois do fim). */
 export function invalidPeriod(form: SearchForm): boolean {
@@ -188,6 +224,10 @@ export interface SearchState {
   error: { code: ErrorCode; message: string } | null;
   /** `true` enquanto carrega mais resultados (a lista atual continua visível). */
   appending: boolean;
+  /** Modalidade realmente executada (pode ser "lexical" quando a semântica estava indisponível). */
+  mode: SearchMode;
+  notice: string | null;
+  semantic: SemanticCoverage | null;
 }
 
 export const IDLE_SEARCH: SearchState = {
@@ -199,6 +239,9 @@ export const IDLE_SEARCH: SearchState = {
   hasMore: false,
   error: null,
   appending: false,
+  mode: "lexical",
+  notice: null,
+  semantic: null,
 };
 
 export type SearchAction =
@@ -228,6 +271,9 @@ export function searchReducer(state: SearchState, action: SearchAction): SearchS
         hasMore: action.response.hasMore,
         error: null,
         appending: false,
+        mode: action.response.mode,
+        notice: action.response.notice,
+        semantic: action.response.semantic,
       };
     }
     case "failure":

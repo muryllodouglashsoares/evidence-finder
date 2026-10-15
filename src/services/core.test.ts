@@ -115,5 +115,22 @@ describe("core service", () => {
       ).rejects.toMatchObject({ code });
     }
   });
+
+  it("exclusão de projeto envia apenas o identificador (nunca caminhos)", async () => {
+    invokeMock.mockResolvedValue(null);
+    await core.previewDeleteProject("p1");
+    await core.deleteProject("p1");
+    expect(invokeMock.mock.calls).toEqual([
+      ["preview_delete_project", { id: "p1" }],
+      ["delete_project", { id: "p1" }],
+    ]);
+  });
+
+  it("propaga falhas parciais de exclusão como erro, sem fingir sucesso", async () => {
+    invokeMock.mockRejectedValue({ code: "IO", message: "2 arquivo(s) não puderam ser excluídos." });
+    const error = await core.deleteProject("p1").catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(CoreError);
+    expect((error as CoreError).code).toBe("IO");
+  });
 });
 

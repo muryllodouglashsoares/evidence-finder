@@ -10,6 +10,7 @@ interface HomePageProps {
   onOpenFolder: () => void;
   onOpenRecent: (id: string) => void;
   onForgetRecent: (project: RecentProject) => void;
+  onDeleteRecent: (project: RecentProject) => void;
   onRetryRecents: () => void;
 }
 
@@ -106,6 +107,15 @@ export function HomePage(props: HomePageProps) {
                     disabled={busy}
                   >
                     Remover da lista
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn--small btn--quiet"
+                    onClick={() => props.onDeleteRecent(project)}
+                    disabled={busy || !project.available}
+                    title="Exclui os dados que o Evidence Finder guarda para este projeto"
+                  >
+                    Excluir projeto…
                   </button>
                 </div>
               </li>

@@ -7,7 +7,8 @@ import { useRecentProjects } from "./hooks/useRecentProjects";
 import { HomePage } from "./pages/HomePage";
 import { ProjectPage } from "./pages/ProjectPage";
 import { core, normalizeError } from "./services/core";
-import type { ProjectInfo, RecentProject } from "./types/contracts";
+import { formatBytes } from "./lib/format";
+import type { DeletionPreview, ProjectInfo, RecentProject } from "./types/contracts";
 
 export default function App() {
   const [project, setProject] = useState<ProjectInfo | null>(null);
@@ -15,6 +16,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [creating, setCreating] = useState(false);
   const [toForget, setToForget] = useState<RecentProject | null>(null);
+  const [toDelete, setToDelete] = useState<{ project: RecentProject; preview: DeletionPreview } | null>(null);
   const recents = useRecentProjects();
 
   async function run(action: () => Promise<ProjectInfo | null>) {
@@ -57,6 +59,40 @@ export default function App() {
     }
   }
 
+  async function askDelete(target: RecentProject) {
+    setBusy(true);
+    setNotice(null);
+    try {
+      const preview = await core.previewDeleteProject(target.id);
+      setToDelete({ project: target, preview });
+    } catch (e) {
+      setNotice({ kind: "error", text: normalizeError(e).message });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmDelete() {
+    if (!toDelete) return;
+    const { project: target } = toDelete;
+    setBusy(true);
+    try {
+      const result = await core.deleteProject(target.id);
+      setNotice({
+        kind: "success",
+        text: result.folderRemoved
+          ? `Projeto "${target.name}" excluído. Os arquivos originais não foram alterados.`
+          : `Projeto "${target.name}" excluído. A pasta continha outros itens, que foram preservados. Os arquivos originais não foram alterados.`,
+      });
+    } catch (e) {
+      setNotice({ kind: "error", text: normalizeError(e).message });
+    } finally {
+      setToDelete(null);
+      setBusy(false);
+      void recents.refresh();
+    }
+  }
+
   function closeProject() {
     void core.closeProject().catch(() => undefined);
     setProject(null);
@@ -83,6 +119,7 @@ export default function App() {
           onOpenFolder={() => void openFolder()}
           onOpenRecent={(id) => void openRecent(id)}
           onForgetRecent={setToForget}
+          onDeleteRecent={(p) => void askDelete(p)}
           onRetryRecents={() => void recents.refresh()}
         />
       )}
@@ -109,6 +146,31 @@ export default function App() {
           <strong>{toForget?.name}</strong> deixará de aparecer na lista de projetos recentes.
         </p>
         <p className="muted">A pasta e os arquivos do projeto não serão alterados nem apagados.</p>
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={toDelete !== null}
+        title="Excluir projeto?"
+        confirmLabel="Excluir projeto"
+        busy={busy}
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => setToDelete(null)}
+      >
+        <p>
+          <strong>{toDelete?.preview.projectName}</strong> será excluído. Esta ação não pode ser
+          desfeita.
+        </p>
+        <p>
+          Serão removidos: o banco do projeto ({toDelete?.preview.documentCount ?? 0} documento(s),
+          textos extraídos e índice de busca) e {toDelete?.preview.managedFiles ?? 0} cópia(s)
+          gerenciada(s) ({formatBytes(toDelete?.preview.managedBytes ?? 0)}).
+        </p>
+        <p className="muted">
+          {toDelete?.preview.referencedDocuments ?? 0} documento(s) apenas referenciado(s): os
+          arquivos originais não serão alterados nem apagados. Exportações já geradas e outros
+          arquivos na pasta do projeto também são preservados. Cópias em backups, SSDs ou na
+          Lixeira não são eliminadas por esta ação.
+        </p>
       </ConfirmDialog>
     </div>
   );

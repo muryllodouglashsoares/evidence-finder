@@ -6,41 +6,49 @@
 //! tokens emitidos aqui. Os tokens vivem apenas na memória do processo.
 
 use crate::error::{AppError, ErrorCode};
-use std::collections::HashMap;
+use crate::models::PickPurpose;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
 const MAX_TOKENS: usize = 64;
 
+/// Cada token só vale para a finalidade com que foi emitido: uma pasta
+/// escolhida para "abrir projeto" não pode ser reaproveitada como destino de
+/// exportação (ou de criação de projeto) por uma chamada IPC forjada.
 #[derive(Default)]
 pub struct AuthorizedDirs {
-    inner: Mutex<HashMap<String, PathBuf>>,
+    /// Ordem de emissão: ao exceder o limite, descarta-se só o token mais antigo.
+    inner: Mutex<VecDeque<(String, PickPurpose, PathBuf)>>,
 }
 
 impl AuthorizedDirs {
-    pub fn grant(&self, canonical_dir: PathBuf) -> Result<String, AppError> {
+    pub fn grant(&self, purpose: PickPurpose, canonical_dir: PathBuf) -> Result<String, AppError> {
         let token = uuid::Uuid::new_v4().to_string();
-        let mut map = self.inner.lock().map_err(|_| AppError::internal())?;
-        if map.len() >= MAX_TOKENS {
-            map.clear();
+        let mut list = self.inner.lock().map_err(|_| AppError::internal())?;
+        while list.len() >= MAX_TOKENS {
+            list.pop_front();
         }
-        map.insert(token.clone(), canonical_dir);
+        list.push_back((token.clone(), purpose, canonical_dir));
         Ok(token)
     }
 
-    pub fn resolve(&self, token: &str) -> Result<PathBuf, AppError> {
-        let map = self.inner.lock().map_err(|_| AppError::internal())?;
-        map.get(token).cloned().ok_or_else(|| {
-            AppError::new(
-                ErrorCode::DirectoryNotAuthorized,
-                "A pasta não está autorizada nesta sessão. Escolha a pasta novamente.",
-            )
-        })
+    pub fn resolve(&self, token: &str, purpose: PickPurpose) -> Result<PathBuf, AppError> {
+        let list = self.inner.lock().map_err(|_| AppError::internal())?;
+        list.iter()
+            .find(|(t, p, _)| t == token && *p == purpose)
+            .map(|(_, _, dir)| dir.clone())
+            .ok_or_else(|| {
+                AppError::new(
+                    ErrorCode::DirectoryNotAuthorized,
+                    "A pasta não está autorizada para esta operação nesta sessão. Escolha a pasta novamente.",
+                )
+            })
     }
 
     pub fn revoke(&self, token: &str) {
-        if let Ok(mut map) = self.inner.lock() {
-            map.remove(token);
+        if let Ok(mut list) = self.inner.lock() {
+            list.retain(|(t, _, _)| t != token);
         }
     }
 }
@@ -84,24 +92,54 @@ mod tests {
     #[test]
     fn unknown_token_is_rejected() {
         let dirs = AuthorizedDirs::default();
-        let err = dirs.resolve("qualquer-coisa").unwrap_err();
+        let err = dirs.resolve("qualquer-coisa", PickPurpose::ProjectFolder).unwrap_err();
         assert_eq!(err.code, ErrorCode::DirectoryNotAuthorized);
     }
 
     #[test]
     fn granted_token_resolves_until_revoked() {
         let dirs = AuthorizedDirs::default();
-        let token = dirs.grant(PathBuf::from("/tmp/x")).unwrap();
-        assert_eq!(dirs.resolve(&token).unwrap(), PathBuf::from("/tmp/x"));
+        let token = dirs.grant(PickPurpose::ProjectFolder, PathBuf::from("/tmp/x")).unwrap();
+        assert_eq!(
+            dirs.resolve(&token, PickPurpose::ProjectFolder).unwrap(),
+            PathBuf::from("/tmp/x")
+        );
         dirs.revoke(&token);
-        assert!(dirs.resolve(&token).is_err());
+        assert!(dirs.resolve(&token, PickPurpose::ProjectFolder).is_err());
     }
 
     #[test]
     fn raw_paths_are_not_valid_tokens() {
         let dirs = AuthorizedDirs::default();
-        dirs.grant(PathBuf::from("/tmp/x")).unwrap();
-        assert!(dirs.resolve("/tmp/x").is_err());
+        dirs.grant(PickPurpose::ProjectFolder, PathBuf::from("/tmp/x")).unwrap();
+        assert!(dirs.resolve("/tmp/x", PickPurpose::ProjectFolder).is_err());
+    }
+
+    #[test]
+    fn token_is_bound_to_its_purpose() {
+        let dirs = AuthorizedDirs::default();
+        let token = dirs.grant(PickPurpose::ProjectFolder, PathBuf::from("/tmp/x")).unwrap();
+        for wrong in [PickPurpose::ExportDestination, PickPurpose::ProjectLocation] {
+            assert_eq!(
+                dirs.resolve(&token, wrong).unwrap_err().code,
+                ErrorCode::DirectoryNotAuthorized
+            );
+        }
+        assert!(dirs.resolve(&token, PickPurpose::ProjectFolder).is_ok());
+    }
+
+    #[test]
+    fn overflow_evicts_only_the_oldest_token() {
+        let dirs = AuthorizedDirs::default();
+        let first = dirs.grant(PickPurpose::ExportDestination, PathBuf::from("/a")).unwrap();
+        let mut last = String::new();
+        for i in 0..MAX_TOKENS {
+            last = dirs
+                .grant(PickPurpose::ExportDestination, PathBuf::from(format!("/b{i}")))
+                .unwrap();
+        }
+        assert!(dirs.resolve(&first, PickPurpose::ExportDestination).is_err());
+        assert!(dirs.resolve(&last, PickPurpose::ExportDestination).is_ok());
     }
 
     #[test]

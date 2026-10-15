@@ -23,6 +23,7 @@ import {
   unselected,
 } from "./export";
 import type { ExportState, SelectionState } from "./export";
+import { buildExportSelection as buildSel, selectionScope as scopeOf, visualEvidenceCounts } from "./export";
 
 const filters = (over: Partial<SearchFilters> = {}): SearchFilters => ({
   documentIds: [],
@@ -57,11 +58,14 @@ function hit(id: number, documentId = "d1"): SearchHit {
     previewCutStart: false,
     previewCutEnd: false,
     textLength: 9,
+    matchKind: "lexical",
+    semanticScore: null,
   };
 }
 
 const review = (over: Partial<ExportReview> = {}): ExportReview => ({
   query: "pagamento",
+  mode: "lexical",
   filters: { documents: [], formats: [], importedFrom: null, importedTo: null },
   occurrences: [
     {
@@ -72,6 +76,9 @@ const review = (over: Partial<ExportReview> = {}): ExportReview => ({
       format: "txt",
       text: "texto completo",
       textLength: 14,
+      matchKind: "lexical",
+      semanticScore: null,
+      visual: { available: false, highlight: null, reason: "Documento de texto: não há imagem de origem." },
       seq: 0,
       method: "text",
       pageNumber: null,
@@ -108,6 +115,7 @@ const result: ExportResult = {
   exportedFiles: 1,
   files: [],
   warnings: [],
+  visualEvidenceCount: 0,
 };
 
 describe("seleção de resultados", () => {
@@ -298,5 +306,46 @@ describe("apresentação", () => {
     expect(lines[1]).toBe("Documentos: conversa.txt");
     expect(lines[2]).toContain("Importados a partir de");
     expect(lines).toHaveLength(3);
+  });
+});
+
+// --- Fase 7: modalidade e evidências visuais -------------------------------------
+
+
+describe("modalidade na seleção", () => {
+  const filters = { documentIds: [], formats: [], importedFrom: null, importedTo: null };
+
+  it("a seleção lexical continua igual à das fases anteriores e a semântica leva a modalidade", () => {
+    expect(buildSel("pagamento", filters, [])).toEqual({ segmentIds: [], query: "pagamento", filters });
+    expect(buildSel("pagamento", filters, [], "hybrid").mode).toBe("hybrid");
+  });
+
+  it("trocar a modalidade troca o escopo (a seleção anterior é descartada)", () => {
+    const lexical = scopeOf("pagamento", filters, "sig");
+    expect(scopeOf("pagamento", filters, "sig", "lexical")).toBe(lexical);
+    expect(scopeOf("pagamento", filters, "sig", "semantic")).not.toBe(lexical);
+    expect(scopeOf("pagamento", filters, "sig", "hybrid")).not.toBe(scopeOf("pagamento", filters, "sig", "semantic"));
+  });
+});
+
+describe("evidências visuais na revisão", () => {
+  const visual = (available: boolean) => ({
+    available,
+    highlight: available ? ("words" as const) : null,
+    reason: available ? null : "motivo",
+  });
+
+  it("conta quantas ocorrências terão imagem e ignora arquivos de texto nos avisos", () => {
+    const counts = visualEvidenceCounts([
+      { format: "png", visual: visual(true) },
+      { format: "png", visual: visual(false) },
+      { format: "pdf", visual: visual(false) },
+      { format: "txt", visual: visual(false) },
+    ]);
+    expect(counts).toEqual({ withVisual: 1, withoutVisual: 3, missingApplicable: 2 });
+  });
+
+  it("sem ocorrências não há nada a avisar", () => {
+    expect(visualEvidenceCounts([])).toEqual({ withVisual: 0, withoutVisual: 0, missingApplicable: 0 });
   });
 });

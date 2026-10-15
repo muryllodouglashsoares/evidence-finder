@@ -27,6 +27,20 @@ pub struct RecentEntry {
     pub last_opened_at: String,
 }
 
+/// Mensagem específica para a lista de recentes: ela é só um atalho e os
+/// projetos em si não são afetados por um arquivo de registro ilegível. O
+/// arquivo nunca é apagado nem recriado automaticamente.
+pub fn explain(e: AppError) -> AppError {
+    use crate::error::ErrorCode;
+    match e.code {
+        ErrorCode::CorruptProject | ErrorCode::NotAProject | ErrorCode::UnsupportedVersion => AppError::new(
+            ErrorCode::CorruptProject,
+            "A lista de projetos recentes não pôde ser lida. Seus projetos não foram afetados: use \"Abrir projeto…\" para abri-los pela pasta. O arquivo da lista foi preservado (app-registry.db, na pasta de dados do aplicativo).",
+        ),
+        _ => e,
+    }
+}
+
 pub struct Registry {
     db_path: PathBuf,
 }

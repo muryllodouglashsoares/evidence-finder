@@ -54,6 +54,22 @@ pub struct BBox {
     pub image_height: i64,
 }
 
+/// Caixa de uma palavra reconhecida pelo OCR (Fase 7). `char_start..char_end` são
+/// posições em caracteres dentro do texto do trecho; as coordenadas são pixels
+/// da imagem original (origem no canto superior esquerdo).
+#[derive(Debug, Clone, PartialEq)]
+pub struct WordBox {
+    pub seq: u32,
+    pub line_no: u32,
+    pub char_start: u32,
+    pub char_end: u32,
+    pub x: i64,
+    pub y: i64,
+    pub w: i64,
+    pub h: i64,
+    pub confidence: Option<f64>,
+}
+
 /// Trecho de texto com a sua origem no documento.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Segment {
@@ -69,6 +85,8 @@ pub struct Segment {
     pub bbox: Option<BBox>,
     /// 0–100 (OCR).
     pub confidence: Option<f64>,
+    /// Palavras do OCR com coordenadas (vazio fora do OCR e em projetos anteriores à Fase 7).
+    pub words: Vec<WordBox>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -218,6 +236,18 @@ pub fn replace_with_result(
                 s.bbox.map(|b| b.image_height),
                 s.confidence,
             ])?;
+            if !s.words.is_empty() {
+                let segment_id = tx.last_insert_rowid();
+                let mut words = tx.prepare(
+                    "INSERT INTO ocr_word (segment_id, seq, line_no, char_start, char_end, x, y, w, h, confidence)
+                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+                )?;
+                for w in &s.words {
+                    words.execute(params![
+                        segment_id, w.seq, w.line_no, w.char_start, w.char_end, w.x, w.y, w.w, w.h, w.confidence,
+                    ])?;
+                }
+            }
         }
     }
     tx.execute(
@@ -340,7 +370,33 @@ pub fn segment_from_row(r: &Row<'_>, o: usize) -> Result<Segment, AppError> {
         char_end: char_end.map(|v| v as u64),
         bbox,
         confidence: r.get(o + 14)?,
+        // As palavras são carregadas à parte (`words_for_segment`), só quando necessárias.
+        words: Vec::new(),
     })
+}
+
+/// Palavras do OCR de um trecho, em ordem de leitura (vazio se não houver).
+pub fn words_for_segment(conn: &Connection, segment_id: i64) -> Result<Vec<WordBox>, AppError> {
+    let mut stmt = conn.prepare(
+        "SELECT seq, line_no, char_start, char_end, x, y, w, h, confidence
+         FROM ocr_word WHERE segment_id = ?1 ORDER BY seq",
+    )?;
+    let mut rows = stmt.query(params![segment_id])?;
+    let mut out = Vec::new();
+    while let Some(r) = rows.next()? {
+        out.push(WordBox {
+            seq: to_u32(r.get(0)?)?,
+            line_no: to_u32(r.get(1)?)?,
+            char_start: to_u32(r.get(2)?)?,
+            char_end: to_u32(r.get(3)?)?,
+            x: r.get(4)?,
+            y: r.get(5)?,
+            w: r.get(6)?,
+            h: r.get(7)?,
+            confidence: r.get(8)?,
+        });
+    }
+    Ok(out)
 }
 
 pub fn segments_for(conn: &Connection, document_id: &str) -> Result<Vec<Segment>, AppError> {

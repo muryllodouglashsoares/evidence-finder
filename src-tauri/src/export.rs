@@ -30,9 +30,12 @@ use crate::extraction;
 use crate::extraction_store::{self, segment_from_row, SEGMENT_COLUMNS};
 use crate::models::{Availability, DocumentRow, ExtractionMethod, StorageMode};
 use crate::paths;
-use crate::pdf_report::{self, ReportDocument, ReportOccurrence};
-use crate::search::{self, BBoxView, SearchFilters, SegmentLocation, MAX_QUERY_CHARS};
+use crate::embeddings::Embedder;
+use crate::pdf_report::{self, ReportDocument, ReportOccurrence, ReportVisual, ReportVisualEntry};
+use crate::search::{self, BBoxView, MatchKind, SearchFilters, SearchMode, SegmentLocation, MAX_QUERY_CHARS};
+use crate::semantic::{self, HybridConfig};
 use crate::service;
+use crate::visual::{self, HighlightKind, Regions};
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -40,6 +43,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// Máximo de ocorrências por exportação.
 pub const MAX_EXPORT_OCCURRENCES: usize = 500;
@@ -65,6 +69,9 @@ pub struct ExportSelection {
     pub query: String,
     #[serde(default)]
     pub filters: SearchFilters,
+    /// Modalidade da pesquisa que produziu a seleção (Fase 7). Padrão: lexical.
+    #[serde(default)]
+    pub mode: SearchMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -84,6 +91,18 @@ pub struct FilterSummary {
     pub imported_to: Option<String>,
 }
 
+/// Se a ocorrência terá evidência visual (imagem com destaque) no relatório.
+/// A confirmação final acontece ao exportar, com a fonte verificada.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VisualPreview {
+    pub available: bool,
+    /// `words` (palavras correspondentes) ou `paragraph` (parágrafo reconhecido).
+    pub highlight: Option<&'static str>,
+    /// Por que não há evidência visual.
+    pub reason: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewOccurrence {
@@ -98,6 +117,9 @@ pub struct ReviewOccurrence {
     pub text_length: u32,
     #[serde(flatten)]
     pub location: SegmentLocation,
+    pub match_kind: MatchKind,
+    pub semantic_score: Option<f32>,
+    pub visual: VisualPreview,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -120,6 +142,7 @@ pub struct ReviewFile {
 #[serde(rename_all = "camelCase")]
 pub struct ExportReview {
     pub query: String,
+    pub mode: SearchMode,
     pub filters: FilterSummary,
     pub occurrences: Vec<ReviewOccurrence>,
     pub files: Vec<ReviewFile>,
@@ -172,6 +195,8 @@ pub struct ExportResult {
     pub exported_files: u32,
     pub files: Vec<ExportFileResult>,
     pub warnings: Vec<String>,
+    /// Evidências visuais incluídas no relatório (Fase 7).
+    pub visual_evidence_count: u32,
 }
 
 // ---------------------------------------------------------------------------
@@ -184,6 +209,12 @@ struct OccurrenceData {
     document_id: String,
     text: String,
     location: SegmentLocation,
+    kind: MatchKind,
+    semantic_score: Option<f32>,
+    /// Trechos literais encontrados (caracteres de `text`).
+    literal_ranges: Vec<(usize, usize)>,
+    /// Região visual (coordenadas reais do OCR) ou o motivo de não haver.
+    regions: Result<Regions, String>,
 }
 
 struct DocData {
@@ -197,6 +228,9 @@ struct Snapshot {
     project_id: String,
     project_name: String,
     query: String,
+    mode: SearchMode,
+    /// Versão do modelo semântico usado para conferir a seleção (modos semântico/híbrido).
+    model_version: Option<String>,
     filters: FilterSummary,
     occurrences: Vec<OccurrenceData>,
     documents: Vec<DocData>,
@@ -232,7 +266,11 @@ fn normalize_selection(selection: &ExportSelection) -> Result<(String, Vec<i64>)
     Ok((query, ids))
 }
 
-fn take_snapshot(project: &ProjectHandle, selection: &ExportSelection) -> Result<Snapshot, AppError> {
+fn take_snapshot(
+    project: &ProjectHandle,
+    selection: &ExportSelection,
+    embedder: Option<&dyn Embedder>,
+) -> Result<Snapshot, AppError> {
     let (query, ids) = normalize_selection(selection)?;
     let record = service::open_project(&project.dir)?.record;
     if record.id != project.id {
@@ -247,7 +285,32 @@ fn take_snapshot(project: &ProjectHandle, selection: &ExportSelection) -> Result
     // Uma única transação de leitura: textos e documentos de um mesmo instante.
     let tx = conn.transaction()?;
 
-    let matched = search::matching_segment_ids(&tx, &project.id, &query, &selection.filters, &ids)?;
+    // Como cada trecho foi encontrado (a mesma regra da pesquisa exibida).
+    let mode = selection.mode;
+    let mut kinds: HashMap<i64, (MatchKind, Option<f32>)> = HashMap::new();
+    let matched: HashSet<i64> = if mode == SearchMode::Lexical {
+        search::matching_segment_ids(&tx, &project.id, &query, &selection.filters, &ids)?
+    } else {
+        let fused = semantic::compute_matches(
+            &tx,
+            &project.id,
+            &query,
+            &selection.filters,
+            mode,
+            embedder,
+            &HybridConfig::default(),
+        )?;
+        let wanted: HashSet<i64> = ids.iter().copied().collect();
+        let mut found = HashSet::new();
+        for f in fused {
+            if wanted.contains(&f.segment_id) {
+                kinds.insert(f.segment_id, (f.kind, f.semantic_score));
+                found.insert(f.segment_id);
+            }
+        }
+        found
+    };
+    let match_expr: Option<String> = if mode == SearchMode::Semantic { None } else { Some(search::build_match(&query)?) };
     if let Some(missing) = ids.iter().find(|id| !matched.contains(id)) {
         let exists: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM text_segment WHERE id = ?1 AND project_id = ?2)",
@@ -284,12 +347,29 @@ fn take_snapshot(project: &ProjectHandle, selection: &ExportSelection) -> Result
             };
             let document_id: String = r.get(0)?;
             let segment = segment_from_row(r, 1)?;
+            let (kind, semantic_score) = kinds.get(id).copied().unwrap_or((MatchKind::Lexical, None));
+            let literal_ranges = match (&match_expr, kind.has_literal()) {
+                (Some(expr), true) => search::literal_ranges(&tx, expr, *id, &segment.text),
+                _ => Vec::new(),
+            };
+            let regions = if segment.method == crate::extraction_store::SegmentMethod::Ocr {
+                let words = extraction_store::words_for_segment(&tx, *id)?;
+                visual::derive_regions(kind, segment.bbox.clone(), &words, &literal_ranges)
+            } else if segment.method == crate::extraction_store::SegmentMethod::PdfText {
+                Err("Página de PDF com texto digital: o aplicativo não possui renderizador de páginas, então não há como localizar o trecho na imagem da página.".to_string())
+            } else {
+                Err("Documento de texto: não há imagem de origem.".to_string())
+            };
             occurrences.push(OccurrenceData {
                 number: index as u32 + 1,
                 segment_id: *id,
                 document_id,
                 location: SegmentLocation::from(&segment),
                 text: segment.text,
+                kind,
+                semantic_score,
+                literal_ranges,
+                regions,
             });
         }
     }
@@ -336,6 +416,8 @@ fn take_snapshot(project: &ProjectHandle, selection: &ExportSelection) -> Result
         project_id: record.id,
         project_name: record.name,
         query,
+        mode,
+        model_version: embedder.filter(|_| mode != SearchMode::Lexical).map(|e| e.model_version().to_string()),
         filters: FilterSummary {
             documents: filter_documents,
             formats: selection.filters.formats.clone(),
@@ -354,7 +436,17 @@ fn take_snapshot(project: &ProjectHandle, selection: &ExportSelection) -> Result
 /// Dados para a etapa de revisão: trechos completos, referências e arquivos
 /// que serão incluídos. Não grava nada.
 pub fn prepare_review(project: &ProjectHandle, selection: &ExportSelection) -> Result<ExportReview, AppError> {
-    let snap = take_snapshot(project, selection)?;
+    prepare_review_with(project, selection, None)
+}
+
+/// Como `prepare_review`, com o gerador de embeddings (necessário nos modos
+/// semântico e híbrido para conferir a seleção).
+pub fn prepare_review_with(
+    project: &ProjectHandle,
+    selection: &ExportSelection,
+    embedder: Option<&dyn Embedder>,
+) -> Result<ExportReview, AppError> {
+    let snap = take_snapshot(project, selection, embedder)?;
     let doc_by_id: HashMap<&str, &DocData> = snap.documents.iter().map(|d| (d.row.id.as_str(), d)).collect();
     let occurrences = snap
         .occurrences
@@ -370,6 +462,20 @@ pub fn prepare_review(project: &ProjectHandle, selection: &ExportSelection) -> R
                 text_length: o.text.chars().count() as u32,
                 text: o.text.clone(),
                 location: o.location.clone(),
+                match_kind: o.kind,
+                semantic_score: o.semantic_score,
+                visual: match &o.regions {
+                    Ok(r) => VisualPreview {
+                        available: true,
+                        highlight: Some(highlight_str(r.kind)),
+                        reason: None,
+                    },
+                    Err(reason) => VisualPreview {
+                        available: false,
+                        highlight: None,
+                        reason: Some(reason.clone()),
+                    },
+                },
             }
         })
         .collect();
@@ -389,6 +495,7 @@ pub fn prepare_review(project: &ProjectHandle, selection: &ExportSelection) -> R
         .collect();
     Ok(ExportReview {
         query: snap.query,
+        mode: snap.mode,
         filters: snap.filters,
         occurrences,
         files,
@@ -520,6 +627,211 @@ fn copy_verified(project: &ProjectHandle, doc: &DocData, target: &Path) -> Resul
 }
 
 // ---------------------------------------------------------------------------
+// Evidências visuais (Fase 7)
+// ---------------------------------------------------------------------------
+
+fn highlight_str(kind: HighlightKind) -> &'static str {
+    match kind {
+        HighlightKind::Words => "words",
+        HighlightKind::Paragraph => "paragraph",
+    }
+}
+
+fn mode_label(mode: SearchMode) -> &'static str {
+    match mode {
+        SearchMode::Lexical => "Pesquisa exata (lexical)",
+        SearchMode::Semantic => "Pesquisa semântica (por significado)",
+        SearchMode::Hybrid => "Pesquisa híbrida (exata + semântica)",
+    }
+}
+
+fn mode_str(mode: SearchMode) -> &'static str {
+    match mode {
+        SearchMode::Lexical => "lexical",
+        SearchMode::Semantic => "semantic",
+        SearchMode::Hybrid => "hybrid",
+    }
+}
+
+fn kind_str(kind: MatchKind) -> &'static str {
+    match kind {
+        MatchKind::Lexical => "lexical",
+        MatchKind::Semantic => "semantic",
+        MatchKind::Both => "both",
+    }
+}
+
+fn kind_label(kind: MatchKind, score: Option<f32>) -> String {
+    match (kind, score) {
+        (MatchKind::Lexical, _) => "Literal (os termos da consulta aparecem no trecho)".to_string(),
+        (MatchKind::Semantic, Some(s)) => format!(
+            "Semântica (similaridade {s:.2}; indicador técnico de proximidade de significado, não probabilidade nem confirmação do fato). O trecho não contém os termos da consulta."
+        ),
+        (MatchKind::Both, Some(s)) => format!(
+            "Literal e semântica (similaridade {s:.2}; indicador técnico, não probabilidade nem confirmação do fato)"
+        ),
+        (MatchKind::Semantic, None) => "Semântica (o trecho não contém os termos da consulta)".to_string(),
+        (MatchKind::Both, None) => "Literal e semântica".to_string(),
+    }
+}
+
+/// Resultado da evidência visual de uma ocorrência.
+#[derive(Debug, Clone)]
+struct VisualResult {
+    included: bool,
+    highlight: Option<HighlightKind>,
+    reason: Option<String>,
+}
+
+impl VisualResult {
+    fn no(reason: impl Into<String>) -> Self {
+        Self { included: false, highlight: None, reason: Some(reason.into()) }
+    }
+}
+
+const LOW_OCR_CONFIDENCE: f64 = 60.0;
+
+/// Monta as evidências visuais a partir das cópias JÁ VERIFICADAS (hash conferido)
+/// em `evidence_dir`. Uma imagem com várias ocorrências vira um único bloco.
+fn build_visuals(
+    snap: &Snapshot,
+    outcomes: &[FileOutcome],
+    evidence_dir: &Path,
+) -> (Vec<ReportVisual>, HashMap<u32, VisualResult>) {
+    let doc_index: HashMap<&str, usize> = snap
+        .documents
+        .iter()
+        .enumerate()
+        .map(|(i, d)| (d.row.id.as_str(), i))
+        .collect();
+    let mut status: HashMap<u32, VisualResult> = HashMap::new();
+    let mut order: Vec<(usize, Option<u32>)> = Vec::new();
+    let mut groups: HashMap<(usize, Option<u32>), Vec<&OccurrenceData>> = HashMap::new();
+
+    for occ in &snap.occurrences {
+        let di = doc_index[occ.document_id.as_str()];
+        match &occ.regions {
+            Err(reason) => {
+                status.insert(occ.number, VisualResult::no(reason.clone()));
+            }
+            Ok(_) if outcomes[di].status != FileStatus::Exported => {
+                status.insert(
+                    occ.number,
+                    VisualResult::no("A fonte não foi incluída com o hash verificado; não há imagem confiável para a evidência visual."),
+                );
+            }
+            Ok(_) => {
+                let key = (di, occ.location.page_number);
+                if !groups.contains_key(&key) {
+                    order.push(key);
+                }
+                groups.entry(key).or_default().push(occ);
+            }
+        }
+    }
+
+    let mut visuals = Vec::new();
+    for key in order {
+        let occs = &groups[&key];
+        let doc = &snap.documents[key.0];
+        let name = sanitize_display_name(&doc.row.name);
+        let fail_all = |status: &mut HashMap<u32, VisualResult>, reason: &str| {
+            for o in occs {
+                status.insert(o.number, VisualResult::no(reason));
+            }
+        };
+        let bytes = match fs::read(evidence_dir.join(&doc.exported_name)) {
+            Ok(b) => b,
+            Err(_) => {
+                fail_all(&mut status, "Não foi possível ler a cópia verificada da fonte para montar a evidência visual.");
+                continue;
+            }
+        };
+        let expected = occs[0].location.bbox.as_ref().map(|b| (b.image_width as u32, b.image_height as u32));
+        let image = match visual::load_image(doc.row.format, &bytes, key.1, expected) {
+            Ok(i) => i,
+            Err(reason) => {
+                fail_all(&mut status, &reason);
+                continue;
+            }
+        };
+
+        let mut entries = Vec::new();
+        let mut notices: Vec<String> = Vec::new();
+        let (mut any_words, mut any_para) = (false, false);
+        for o in occs {
+            let Ok(regions) = &o.regions else { continue };
+            match regions.kind {
+                HighlightKind::Words => any_words = true,
+                HighlightKind::Paragraph => any_para = true,
+            }
+            for n in &regions.notices {
+                notices.push(format!("Ocorrência {:03}: {n}", o.number));
+            }
+            if let Some(c) = o.location.confidence {
+                if c < LOW_OCR_CONFIDENCE {
+                    notices.push(format!(
+                        "Ocorrência {:03}: confiança baixa do OCR ({c:.0}%). Confira o texto reconhecido com a imagem.",
+                        o.number
+                    ));
+                }
+            }
+            let mut meta: Vec<(String, String)> = vec![
+                ("Fonte".to_string(), format!("{name} ({})", format_label(doc.row.format))),
+                (
+                    "Localização".to_string(),
+                    describe_location(&o.location)
+                        .into_iter()
+                        .map(|(k, v)| format!("{k} {v}"))
+                        .collect::<Vec<_>>()
+                        .join("; "),
+                ),
+                ("Consulta".to_string(), snap.query.clone()),
+                ("Modalidade de pesquisa".to_string(), mode_label(snap.mode).to_string()),
+                ("Correspondência".to_string(), kind_label(o.kind, o.semantic_score)),
+                (
+                    "Destaque".to_string(),
+                    match regions.kind {
+                        HighlightKind::Words => "palavras correspondentes à consulta".to_string(),
+                        HighlightKind::Paragraph => "parágrafo reconhecido (sem termo literal)".to_string(),
+                    },
+                ),
+            ];
+            if let Some(c) = o.location.confidence {
+                meta.push(("Confiança do OCR".to_string(), format!("{c:.0}% (estimativa do motor; não garante a correção do texto)")));
+            }
+            meta.push(("Arquivo exportado".to_string(), format!("{EVIDENCE_DIR}/{}", doc.exported_name)));
+            entries.push(ReportVisualEntry {
+                number: o.number,
+                title: format!("Evidência {:03}", o.number),
+                meta,
+                snippet: o.text.clone(),
+                marks: o.literal_ranges.clone(),
+                rects: regions.rects.clone(),
+            });
+            status.insert(
+                o.number,
+                VisualResult { included: true, highlight: Some(regions.kind), reason: None },
+            );
+        }
+        let numbers: Vec<String> = entries.iter().map(|e| format!("{:03}", e.number)).collect();
+        let heading = format!(
+            "{} {} — {name}{}",
+            if numbers.len() == 1 { "Evidência visual · Ocorrência" } else { "Evidência visual · Ocorrências" },
+            numbers.join(", "),
+            key.1.map(|p| format!(" (página {p})")).unwrap_or_default()
+        );
+        let caption = match (any_words, any_para) {
+            (true, false) => "Trecho encontrado marcado em amarelo".to_string(),
+            (false, true) => "Parágrafo reconhecido (correspondência semântica) marcado em amarelo".to_string(),
+            _ => "Trechos encontrados e parágrafos semânticos marcados em amarelo".to_string(),
+        };
+        visuals.push(ReportVisual { heading, image, caption, entries, notices });
+    }
+    (visuals, status)
+}
+
+// ---------------------------------------------------------------------------
 // Relatório
 // ---------------------------------------------------------------------------
 
@@ -610,6 +922,8 @@ fn build_report(
     outcomes: &[FileOutcome],
     export_id: &str,
     local_now: chrono::DateTime<chrono::Local>,
+    visuals: Vec<ReportVisual>,
+    visual_status: &HashMap<u32, VisualResult>,
 ) -> ReportDocument {
     let by_doc: HashMap<&str, (&DocData, &FileOutcome)> = snap
         .documents
@@ -629,6 +943,7 @@ fn build_report(
             local_now.format("%d/%m/%Y %H:%M:%S (UTC%:z)").to_string(),
         ),
         ("Consulta".to_string(), snap.query.clone()),
+        ("Modalidade de pesquisa".to_string(), mode_label(snap.mode).to_string()),
         ("Filtros".to_string(), describe_filters(&snap.filters)),
         ("Ocorrências".to_string(), snap.occurrences.len().to_string()),
         ("Documentos de origem".to_string(), snap.documents.len().to_string()),
@@ -637,6 +952,13 @@ fn build_report(
             format!("{exported} de {} (pasta {EVIDENCE_DIR}/)", outcomes.len()),
         ),
     ];
+    if let Some(model) = &snap.model_version {
+        summary.push(("Modelo semântico".to_string(), format!("{model} (local; nenhum dado foi enviado à internet)")));
+    }
+    summary.push((
+        "Evidências visuais".to_string(),
+        format!("{} de {} ocorrências", visual_status.values().filter(|v| v.included).count(), snap.occurrences.len()),
+    ));
     if failed > 0 {
         summary.push((
             "ATENÇÃO".to_string(),
@@ -677,6 +999,7 @@ fn build_report(
                     outcome.status.reason()
                 ));
             }
+            meta.push(("Tipo de correspondência".to_string(), kind_label(o.kind, o.semantic_score)));
             meta.extend(describe_location(&o.location));
             meta.push(("Método de extração".to_string(), method_label(o.location.method).to_string()));
             if let Some(engine) = &doc.engine {
@@ -691,6 +1014,9 @@ fn build_report(
             meta.push(("Identificadores".to_string(), format!("trecho {} · documento {}", o.segment_id, o.document_id)));
             meta.push(("Tamanho do trecho".to_string(), format!("{} caracteres", o.text.chars().count())));
 
+            if o.kind == MatchKind::Semantic {
+                notices.push("Correspondência exclusivamente semântica: o trecho não contém os termos da consulta, por isso não há destaque literal em amarelo no texto.".to_string());
+            }
             let issues = pdf_report::text_issues(&o.text);
             if issues.unsupported > 0 {
                 notices.push(format!(
@@ -709,9 +1035,47 @@ fn build_report(
                 system_meta: meta,
                 text: o.text.clone(),
                 notices,
+                marks: o.literal_ranges.clone(),
             }
         })
         .collect();
+
+    let index = snap
+        .occurrences
+        .iter()
+        .map(|o| {
+            let (doc, _) = by_doc[o.document_id.as_str()];
+            let included = visual_status.get(&o.number).map(|v| v.included).unwrap_or(false);
+            (
+                format!("{:03}", o.number),
+                format!(
+                    "{} · {} · evidência visual: {}",
+                    sanitize_display_name(&doc.row.name),
+                    match o.kind {
+                        MatchKind::Lexical => "literal",
+                        MatchKind::Semantic => "semântica",
+                        MatchKind::Both => "literal + semântica",
+                    },
+                    if included { "sim" } else { "não" }
+                ),
+            )
+        })
+        .collect();
+
+    let mut limitations: Vec<String> = Vec::new();
+    for o in &snap.occurrences {
+        let Some(v) = visual_status.get(&o.number) else { continue };
+        let applicable = !matches!(
+            o.location.method,
+            ExtractionMethod::Text | ExtractionMethod::Manual
+        );
+        if let (false, true, Some(reason)) = (v.included, applicable, &v.reason) {
+            limitations.push(format!("Ocorrência {:03} — sem evidência visual: {reason}", o.number));
+        }
+    }
+    if snap.mode != SearchMode::Lexical {
+        limitations.push("A similaridade semântica indica possível proximidade de significado entre a consulta e o trecho; não é probabilidade nem confirmação de que o fato descrito ocorreu.".to_string());
+    }
 
     ReportDocument {
         title: "Relatório de evidências".to_string(),
@@ -720,11 +1084,14 @@ fn build_report(
         disclaimer: vec![
             "Este relatório reúne trechos de texto extraídos de documentos importados no Evidence Finder e localizados por busca textual local. O conteúdo extraído é reproduzido como texto literal, sem interpretação; trechos obtidos por OCR podem conter erros de reconhecimento.".to_string(),
             "Correspondência textual, OCR e hashes SHA-256 não comprovam autenticidade, autoria nem confirmam os fatos descritos. Este relatório e o manifest.json registram a operação realizada e os dados técnicos disponíveis; não constituem cadeia de custódia formal.".to_string(),
-            "Nas páginas seguintes, as caixas azuis são metadados produzidos pelo sistema; as caixas cinzas contêm o texto extraído da fonte.".to_string(),
+            "Nas páginas seguintes, as caixas azuis são metadados produzidos pelo sistema; as caixas cinzas contêm o texto extraído da fonte. O amarelo marca os trechos que correspondem literalmente à consulta, no texto e nas imagens; ele não indica relevância nem veracidade.".to_string(),
         ],
         created_utc: local_now.with_timezone(&chrono::Utc),
         footer_id: short_id(export_id),
+        index,
         occurrences,
+        visuals,
+        limitations,
     }
 }
 
@@ -750,7 +1117,20 @@ struct ManifestProject<'a> {
 #[serde(rename_all = "camelCase")]
 struct ManifestSearch<'a> {
     query: &'a str,
+    /// `lexical`, `semantic` ou `hybrid` (campo acrescentado na Fase 7).
+    mode: &'static str,
+    /// Versão do modelo semântico usado para conferir a seleção, se houve.
+    semantic_model: Option<&'a str>,
     filters: &'a FilterSummary,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ManifestVisual {
+    included: bool,
+    /// `words` ou `paragraph`.
+    highlight: Option<&'static str>,
+    reason: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -792,6 +1172,11 @@ struct ManifestOccurrence {
     text_length: u32,
     /// SHA-256 do texto UTF-8 do trecho (permite conferir o trecho sem guardá-lo aqui).
     text_sha256: String,
+    /// `lexical`, `semantic` ou `both` (Fase 7).
+    match_kind: &'static str,
+    /// Cosseno consulta×trecho; indicador técnico, não probabilidade (Fase 7).
+    semantic_score: Option<f32>,
+    visual_evidence: ManifestVisual,
 }
 
 #[derive(Serialize)]
@@ -838,6 +1223,7 @@ fn build_manifest(
     export_id: &str,
     local_now: chrono::DateTime<chrono::Local>,
     pdf: &[u8],
+    visual_status: &HashMap<u32, VisualResult>,
 ) -> Result<Vec<u8>, AppError> {
     let by_doc: HashMap<&str, (&DocData, &FileOutcome)> = snap
         .documents
@@ -876,6 +1262,16 @@ fn build_manifest(
                 },
                 text_length: o.text.chars().count() as u32,
                 text_sha256: sha256_hex(o.text.as_bytes()),
+                match_kind: kind_str(o.kind),
+                semantic_score: o.semantic_score,
+                visual_evidence: match visual_status.get(&o.number) {
+                    Some(v) => ManifestVisual {
+                        included: v.included,
+                        highlight: v.highlight.map(highlight_str),
+                        reason: v.reason.clone(),
+                    },
+                    None => ManifestVisual { included: false, highlight: None, reason: None },
+                },
             }
         })
         .collect();
@@ -915,6 +1311,8 @@ fn build_manifest(
         },
         search: ManifestSearch {
             query: &snap.query,
+            mode: mode_str(snap.mode),
+            semantic_model: snap.model_version.as_deref(),
             filters: &snap.filters,
         },
         report: ManifestReport {
@@ -1013,6 +1411,8 @@ pub(crate) struct ExportOptions {
     /// Prefixo do nome final da pasta (somente testes).
     pub folder_base: Option<String>,
     pub fail_at: Option<FailPoint>,
+    /// Gerador de embeddings para conferir seleções semânticas/híbridas.
+    pub embedder: Option<Arc<dyn Embedder>>,
 }
 
 fn injected(options: &ExportOptions, point: FailPoint) -> Result<(), AppError> {
@@ -1038,6 +1438,55 @@ fn reject_managed_destination(project: &ProjectHandle, dest: &Path) -> Result<()
 // Exportação
 // ---------------------------------------------------------------------------
 
+/// Tempo mínimo para considerar abandonada uma pasta temporária de exportação.
+const STALE_STAGING_AGE: std::time::Duration = std::time::Duration::from_secs(6 * 60 * 60);
+
+/// Recuperação após encerramento inesperado: remove pastas temporárias
+/// (`.EvidenceFinder-temp-*`) abandonadas no destino por exportações
+/// interrompidas. Só remove uma pasta se (1) for uma pasta real, não um atalho,
+/// (2) for antiga (uma exportação em andamento é recente) e (3) contiver
+/// exclusivamente a estrutura que o app grava (`evidence/`, relatório e manifesto):
+/// qualquer outro conteúdo indica que a pasta não é nossa e ela é preservada.
+/// Pastas finais publicadas nunca têm o prefixo temporário.
+pub(crate) fn purge_stale_staging(dest: &Path, min_age: std::time::Duration) -> u32 {
+    let Ok(entries) = fs::read_dir(dest) else {
+        return 0;
+    };
+    let now = std::time::SystemTime::now();
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let is_staging = entry.file_name().to_str().is_some_and(|n| n.starts_with(STAGING_PREFIX));
+        if !is_staging {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(meta) = fs::symlink_metadata(&path) else { continue };
+        let old_enough = meta
+            .modified()
+            .ok()
+            .and_then(|m| now.duration_since(m).ok())
+            .is_some_and(|age| age >= min_age);
+        if !meta.is_dir() || !old_enough {
+            continue;
+        }
+        let ours = fs::read_dir(&path).is_ok_and(|children| {
+            children.flatten().all(|c| {
+                let name = c.file_name();
+                let kind = c.file_type();
+                match (name.to_str(), kind) {
+                    (Some(n), Ok(k)) if n == EVIDENCE_DIR => k.is_dir(),
+                    (Some(n), Ok(k)) if n == REPORT_FILE || n == MANIFEST_FILE => k.is_file(),
+                    _ => false,
+                }
+            })
+        });
+        if ours && fs::remove_dir_all(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
 /// Gera o pacote em uma nova pasta dentro de `dest` (diretório já autorizado
 /// pelo usuário).
 pub fn export_evidence(
@@ -1048,15 +1497,27 @@ pub fn export_evidence(
     export_with(project, selection, dest, &ExportOptions::default())
 }
 
+/// Como `export_evidence`, com o gerador de embeddings (modos semântico e híbrido).
+pub fn export_evidence_with(
+    project: &ProjectHandle,
+    selection: &ExportSelection,
+    dest: &Path,
+    embedder: Option<Arc<dyn Embedder>>,
+) -> Result<ExportResult, AppError> {
+    export_with(project, selection, dest, &ExportOptions { embedder, ..ExportOptions::default() })
+}
+
 pub(crate) fn export_with(
     project: &ProjectHandle,
     selection: &ExportSelection,
     dest: &Path,
     options: &ExportOptions,
 ) -> Result<ExportResult, AppError> {
-    let snap = take_snapshot(project, selection)?;
+    let snap = take_snapshot(project, selection, options.embedder.as_deref())?;
     let dest = paths::canonical_dir(dest)?;
     reject_managed_destination(project, &dest)?;
+    // Best-effort: resíduos de exportações interrompidas nunca impedem uma nova.
+    let _ = purge_stale_staging(&dest, STALE_STAGING_AGE);
 
     let local_now = chrono::Local::now();
     let export_id = uuid::Uuid::new_v4().to_string();
@@ -1088,7 +1549,10 @@ pub(crate) fn export_with(
         }
 
         injected(options, FailPoint::BeforeReport)?;
-        let report = build_report(&snap, &outcomes, &export_id, local_now);
+        // As imagens vêm das cópias já verificadas; o original nunca é tocado.
+        let (visuals, visual_status) = build_visuals(&snap, &outcomes, &evidence_dir);
+        let visual_count = visual_status.values().filter(|v| v.included).count() as u32;
+        let report = build_report(&snap, &outcomes, &export_id, local_now, visuals, &visual_status);
         let pdf = pdf_report::render(&report)?;
         if pdf_report::page_count_of(&pdf).is_none() {
             return Err(export_error("O relatório PDF gerado não passou na verificação estrutural."));
@@ -1096,7 +1560,7 @@ pub(crate) fn export_with(
         write_new(&staging_dir.join(REPORT_FILE), &pdf)?;
 
         injected(options, FailPoint::BeforeManifest)?;
-        let manifest = build_manifest(&snap, &outcomes, &export_id, local_now, &pdf)?;
+        let manifest = build_manifest(&snap, &outcomes, &export_id, local_now, &pdf, &visual_status)?;
         write_new(&staging_dir.join(MANIFEST_FILE), &manifest)?;
 
         injected(options, FailPoint::BeforePublish)?;
@@ -1133,6 +1597,7 @@ pub(crate) fn export_with(
             exported_files: exported as u32,
             files,
             warnings,
+            visual_evidence_count: visual_count,
         })
     })();
 

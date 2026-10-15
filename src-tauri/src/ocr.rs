@@ -15,7 +15,7 @@
 //! produzir texto degradado em silêncio. `eng` é usado em conjunto se existir.
 
 use crate::error::{AppError, ErrorCode};
-use crate::extraction_store::BBox;
+use crate::extraction_store::{BBox, WordBox};
 use crate::models::OcrStatus;
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
@@ -46,6 +46,8 @@ pub struct OcrSegment {
     pub bbox: BBox,
     /// 0–100.
     pub confidence: f64,
+    /// Palavras com caixa própria (Fase 7). `char_start/char_end` apontam para `text`.
+    pub words: Vec<WordBox>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -422,9 +424,18 @@ fn pnm_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
 /// Agrupa as palavras (nível 5) em parágrafos do Tesseract. Cada parágrafo vira
 /// um segmento com a caixa que envolve suas palavras e a confiança média.
 pub fn parse_tsv(tsv: &str, image_width: i64, image_height: i64) -> Vec<OcrSegment> {
+    struct RawWord {
+        no: i64,
+        text: String,
+        x: i64,
+        y: i64,
+        w: i64,
+        h: i64,
+        conf: f64,
+    }
     #[derive(Default)]
     struct Para {
-        lines: BTreeMap<i64, Vec<(i64, String)>>,
+        lines: BTreeMap<i64, Vec<RawWord>>,
         left: i64,
         top: i64,
         right: i64,
@@ -467,21 +478,52 @@ pub fn parse_tsv(tsv: &str, image_width: i64, image_height: i64) -> Vec<OcrSegme
         }
         p.conf_sum += conf;
         p.conf_n += 1;
-        p.lines.entry(line_no).or_default().push((word_no, word.to_string()));
+        p.lines.entry(line_no).or_default().push(RawWord {
+            no: word_no,
+            text: word.to_string(),
+            x: l,
+            y: t,
+            w,
+            h,
+            conf,
+        });
     }
     paras
         .into_values()
         .filter(|p| p.started)
         .map(|mut p| {
-            let text = p
-                .lines
-                .values_mut()
-                .map(|words| {
-                    words.sort_by_key(|(n, _)| *n);
-                    words.iter().map(|(_, w)| w.as_str()).collect::<Vec<_>>().join(" ")
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+            // Monta o texto (palavras separadas por espaço, linhas por \n) registrando a
+            // posição, em caracteres, de cada palavra dentro dele.
+            let mut text = String::new();
+            let mut chars = 0u32;
+            let mut words: Vec<WordBox> = Vec::new();
+            for (line_index, (line_no, raw)) in p.lines.iter_mut().enumerate() {
+                raw.sort_by_key(|w| w.no);
+                if line_index > 0 {
+                    text.push('\n');
+                    chars += 1;
+                }
+                for (i, w) in raw.iter().enumerate() {
+                    if i > 0 {
+                        text.push(' ');
+                        chars += 1;
+                    }
+                    let len = w.text.chars().count() as u32;
+                    words.push(WordBox {
+                        seq: words.len() as u32,
+                        line_no: (*line_no).max(0) as u32,
+                        char_start: chars,
+                        char_end: chars + len,
+                        x: w.x.max(0),
+                        y: w.y.max(0),
+                        w: w.w,
+                        h: w.h,
+                        confidence: Some(w.conf),
+                    });
+                    text.push_str(&w.text);
+                    chars += len;
+                }
+            }
             OcrSegment {
                 text,
                 bbox: BBox {
@@ -493,6 +535,7 @@ pub fn parse_tsv(tsv: &str, image_width: i64, image_height: i64) -> Vec<OcrSegme
                     image_height,
                 },
                 confidence: p.conf_sum / p.conf_n as f64,
+                words,
             }
         })
         .collect()

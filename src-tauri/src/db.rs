@@ -129,6 +129,46 @@ pub const PROJECT_MIGRATIONS: &[&str] = &[
         INSERT INTO text_segment_fts (rowid, text) VALUES (new.id, new.text);
     END;
     INSERT INTO text_segment_fts (text_segment_fts) VALUES ('rebuild');",
+    // v5 (Fase 7): migração apenas aditiva; nenhuma tabela existente é alterada.
+    // `ocr_word`: caixa de cada palavra reconhecida (para destacar só o trecho
+    // encontrado nas imagens do relatório). `char_start/char_end` são posições em
+    // caracteres dentro de `text_segment.text`. Projetos antigos não têm linhas
+    // aqui: a ausência significa "sem coordenadas de palavras" (reprocessar).
+    // `embedding_vector`: vetores por conteúdo (hash do texto preparado + versão do
+    // modelo), reaproveitados quando o mesmo texto reaparece. `segment_embedding`
+    // liga cada trecho ao seu vetor e some em cascata com o trecho (remoção ou
+    // reprocessamento do documento), invalidando o índice semântico dele.
+    "CREATE TABLE ocr_word (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        segment_id INTEGER NOT NULL REFERENCES text_segment(id) ON DELETE CASCADE,
+        seq        INTEGER NOT NULL CHECK (seq >= 0),
+        line_no    INTEGER NOT NULL,
+        char_start INTEGER NOT NULL CHECK (char_start >= 0),
+        char_end   INTEGER NOT NULL CHECK (char_end > char_start),
+        x          INTEGER NOT NULL,
+        y          INTEGER NOT NULL,
+        w          INTEGER NOT NULL,
+        h          INTEGER NOT NULL,
+        confidence REAL,
+        UNIQUE (segment_id, seq)
+    );
+    CREATE TABLE embedding_vector (
+        key_sha256       TEXT NOT NULL,
+        model_version    TEXT NOT NULL,
+        pipeline_version INTEGER NOT NULL,
+        dim              INTEGER NOT NULL CHECK (dim > 0),
+        vector           BLOB NOT NULL,
+        created_at       TEXT NOT NULL,
+        PRIMARY KEY (key_sha256, model_version, pipeline_version)
+    );
+    CREATE TABLE segment_embedding (
+        segment_id       INTEGER PRIMARY KEY NOT NULL REFERENCES text_segment(id) ON DELETE CASCADE,
+        document_id      TEXT NOT NULL REFERENCES document(id) ON DELETE CASCADE,
+        key_sha256       TEXT NOT NULL,
+        model_version    TEXT NOT NULL,
+        pipeline_version INTEGER NOT NULL
+    );
+    CREATE INDEX idx_segment_embedding_document ON segment_embedding (document_id);",
 ];
 
 pub fn latest_project_version() -> i64 {

@@ -34,6 +34,8 @@ pub enum ErrorCode {
     InvalidQuery,
     /// Falha na exportação de evidências (Fase 5): nada foi publicado.
     ExportFailed,
+    /// Busca semântica indisponível (modelo ausente/inválido ou compilação sem o motor) — Fase 7.
+    SemanticUnavailable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

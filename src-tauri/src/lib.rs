@@ -9,6 +9,7 @@ pub mod authorization;
 pub mod commands;
 pub mod db;
 pub mod docformat;
+pub mod embeddings;
 pub mod docstore;
 pub mod documents;
 pub mod error;
@@ -22,10 +23,16 @@ pub mod pdf_report;
 pub mod paths;
 pub mod registry;
 pub mod search;
+pub mod semantic;
+pub mod semantic_store;
 pub mod service;
 pub mod state;
 pub mod txt_extract;
 pub mod validation;
+pub mod visual;
+
+#[cfg(test)]
+mod security_tests;
 
 use tauri::Manager;
 
@@ -47,6 +54,8 @@ pub fn run() {
             commands::list_recent_projects,
             commands::open_recent_project,
             commands::forget_recent_project,
+            commands::preview_delete_project,
+            commands::delete_project,
             commands::close_project,
             commands::list_documents,
             commands::pick_documents,
@@ -58,6 +67,10 @@ pub fn run() {
             commands::start_extraction,
             commands::get_extraction_progress,
             commands::search_segments,
+            commands::get_semantic_status,
+            commands::start_semantic_indexing,
+            commands::cancel_semantic_indexing,
+            commands::clear_semantic_index,
             commands::get_segment_context,
             commands::open_document_source,
             commands::prepare_export_review,

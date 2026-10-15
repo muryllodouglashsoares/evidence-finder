@@ -8,12 +8,13 @@ import {
   FILE_STATUS_LABEL,
   IDLE_EXPORT,
   unavailableFiles,
+  visualEvidenceCounts,
 } from "../lib/export";
 import { METHOD_LABEL } from "../lib/extraction";
 import { formatBytes } from "../lib/format";
-import { confidenceText, describeLocation } from "../lib/search";
+import { confidenceText, describeLocation, MATCH_KIND_LABEL, MODE_LABEL, scoreText } from "../lib/search";
 import { core, normalizeError } from "../services/core";
-import type { SearchFilters, SearchHit } from "../types/contracts";
+import type { ExportReview, SearchFilters, SearchHit, SearchMode } from "../types/contracts";
 import { AVAILABILITY_LABEL } from "../lib/documents";
 import { Dialog } from "./Dialog";
 
@@ -24,31 +25,49 @@ interface ExportDialogProps {
   query: string;
   filters: SearchFilters;
   items: SearchHit[];
+  /** Modalidade executada na pesquisa que produziu a seleção. */
+  mode?: SearchMode;
   onClose: () => void;
   /** Chamado quando o pacote foi gerado com sucesso. */
   onExported: (folderName: string, warnings: number) => void;
+}
+
+function visualSummary(occurrences: ExportReview["occurrences"]): string {
+  const { withVisual, missingApplicable } = visualEvidenceCounts(occurrences);
+  const base = `${withVisual === 1 ? "1 ocorrência terá" : `${withVisual} ocorrências terão`} evidência visual (imagem com destaque amarelo) no relatório.`;
+  return missingApplicable > 0
+    ? `${base} ${missingApplicable === 1 ? "1 ocorrência de imagem ou PDF fica" : `${missingApplicable} ocorrências de imagem ou PDF ficam`} só com o trecho de texto; o motivo aparece em cada item.`
+    : base;
 }
 
 function plural(n: number, one: string, many: string): string {
   return `${n.toLocaleString("pt-BR")} ${n === 1 ? one : many}`;
 }
 
-export function ExportDialog({ open, projectId, query, filters, items, onClose, onExported }: ExportDialogProps) {
+export function ExportDialog({ open, projectId, query, filters, items, mode = "lexical", onClose, onExported }: ExportDialogProps) {
   const [state, dispatch] = useReducer(exportReducer, IDLE_EXPORT);
   const counter = useRef(0);
+
+  // A MESMA seleção (inclusive a modalidade) serve para revisar e para exportar: o núcleo reconfere
+  // cada resultado com a modalidade recebida, então exportar em outra modalidade rejeitaria os
+  // resultados que só a busca semântica encontrou.
+  const buildSelection = useCallback(
+    () => buildExportSelection(query, filters, items, mode),
+    [query, filters, items, mode],
+  );
 
   const loadReview = useCallback(() => {
     counter.current += 1;
     const seq = counter.current;
     dispatch({ type: "open", seq });
     core
-      .prepareExportReview(projectId, buildExportSelection(query, filters, items))
+      .prepareExportReview(projectId, buildSelection())
       .then((review) => dispatch({ type: "reviewLoaded", seq, review }))
       .catch((e) => {
         const error = normalizeError(e);
         dispatch({ type: "reviewFailed", seq, code: error.code, message: error.message });
       });
-  }, [projectId, query, filters, items]);
+  }, [projectId, buildSelection]);
 
   // Abrir o diálogo sempre refaz a revisão no núcleo (nunca reaproveita resultado antigo).
   useEffect(() => {
@@ -77,7 +96,7 @@ export function ExportDialog({ open, projectId, query, filters, items, onClose, 
     const token = state.destination.token;
     dispatch({ type: "exportStarted" });
     try {
-      const result = await core.exportEvidence(projectId, buildExportSelection(query, filters, items), token);
+      const result = await core.exportEvidence(projectId, buildSelection(), token);
       dispatch({ type: "exportDone", result });
       onExported(result.folderName, result.warnings.length);
     } catch (e) {
@@ -119,6 +138,10 @@ export function ExportDialog({ open, projectId, query, filters, items, onClose, 
               <dd>“{review.query}”</dd>
             </div>
             <div>
+              <dt>Modalidade</dt>
+              <dd>{MODE_LABEL[review.mode]}</dd>
+            </div>
+            <div>
               <dt>Filtros</dt>
               <dd>
                 {describeFilterSummary(review.filters).length === 0
@@ -157,6 +180,9 @@ export function ExportDialog({ open, projectId, query, filters, items, onClose, 
             ))}
           </ul>
 
+          <p className="small" role="status">
+            {visualSummary(review.occurrences)}
+          </p>
           <h3 className="export__heading">Trechos selecionados</h3>
           <ol className="export__occurrences dialog__content">
             {review.occurrences.map((o) => (
@@ -167,6 +193,23 @@ export function ExportDialog({ open, projectId, query, filters, items, onClose, 
                   {confidenceText(o) ? ` · ${confidenceText(o)}` : ""}
                 </p>
                 <p className="ctx__text export__text">{o.text}</p>
+                {o.matchKind !== "lexical" ? (
+                  <p className="export__visual">
+                    {MATCH_KIND_LABEL[o.matchKind]}
+                    {scoreText(o) ? ` · ${scoreText(o)}` : ""} — indicador técnico, não confirma o fato.
+                  </p>
+                ) : null}
+                {o.visual.available ? (
+                  <p className="export__visual export__visual--yes">
+                    Evidência visual: a imagem original será incluída com{" "}
+                    {o.visual.highlight === "paragraph"
+                      ? "o parágrafo reconhecido marcado em amarelo (sem termo literal)"
+                      : "o trecho encontrado marcado em amarelo"}
+                    .
+                  </p>
+                ) : o.format !== "txt" ? (
+                  <p className="export__visual export__visual--no">Sem evidência visual: {o.visual.reason}</p>
+                ) : null}
               </li>
             ))}
           </ol>
@@ -202,7 +245,8 @@ export function ExportDialog({ open, projectId, query, filters, items, onClose, 
           </p>
           <p className="small">
             {plural(result.occurrenceCount, "ocorrência", "ocorrências")} · {result.exportedFiles} de {result.documentCount}{" "}
-            {result.documentCount === 1 ? "fonte incluída" : "fontes incluídas"}.
+            {result.documentCount === 1 ? "fonte incluída" : "fontes incluídas"} ·{" "}
+            {plural(result.visualEvidenceCount, "evidência visual", "evidências visuais")}.
           </p>
           {result.warnings.length > 0 ? (
             <div className="small extract__warn">

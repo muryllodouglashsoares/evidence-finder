@@ -22,6 +22,7 @@ use chrono::{DateTime, Utc};
 use flate2::{write::ZlibEncoder, Compression};
 use std::collections::BTreeMap;
 use std::io::Write;
+use crate::visual::{ImageData, NormRect, VisualImage};
 use ttf_parser::{Face, GlyphId};
 
 const REGULAR_TTF: &[u8] = include_bytes!("../assets/fonts/DejaVuSans.ttf");
@@ -49,6 +50,21 @@ const SYS_BAR: Color = (0.17, 0.34, 0.70);
 const WARN_BG: Color = (1.0, 0.95, 0.82);
 const WARN_BAR: Color = (0.80, 0.50, 0.05);
 const RULE: Color = (0.78, 0.80, 0.84);
+/// Amarelo do destaque (fundo) e da borda. O fundo é desenhado ATRÁS do texto
+/// (trechos) ou com mistura "Multiply" (imagens): o texto original continua legível.
+const YELLOW: Color = (1.0, 0.90, 0.20);
+const YELLOW_EDGE: Color = (0.80, 0.60, 0.0);
+
+// Bloco de evidência visual: imagem à esquerda, descrição à direita.
+const COL_GAP: f32 = 16.0;
+const IMG_COL_W: f32 = 246.0;
+const DESC_W: f32 = CONTENT_W - IMG_COL_W - COL_GAP;
+const MAX_IMG_H: f32 = 320.0;
+const MAX_BLOCK_H: f32 = 380.0;
+const DESC_LH: f32 = 12.0;
+/// Máximo de caracteres do trecho reproduzido no bloco visual (o texto completo
+/// continua na seção de trechos).
+const MAX_VISUAL_SNIPPET: usize = 1200;
 
 // ---------------------------------------------------------------------------
 // Conteúdo do relatório (montado pelo módulo de exportação)
@@ -64,7 +80,36 @@ pub struct ReportDocument {
     pub created_utc: DateTime<Utc>,
     /// Identificação curta exibida no rodapé de todas as páginas.
     pub footer_id: String,
+    /// Índice das ocorrências (rótulo, descrição), exibido na capa.
+    pub index: Vec<(String, String)>,
     pub occurrences: Vec<ReportOccurrence>,
+    /// Evidências visuais (imagem + descrição), em ordem.
+    pub visuals: Vec<ReportVisual>,
+    /// Avisos gerais e limitações de reprodução (itens sem evidência visual etc.).
+    pub limitations: Vec<String>,
+}
+
+/// Bloco de evidência visual: UMA imagem com uma ou mais ocorrências do mesmo documento.
+pub struct ReportVisual {
+    pub heading: String,
+    pub image: VisualImage,
+    /// Legenda sob a imagem.
+    pub caption: String,
+    pub entries: Vec<ReportVisualEntry>,
+    pub notices: Vec<String>,
+}
+
+pub struct ReportVisualEntry {
+    pub number: u32,
+    pub title: String,
+    /// Fonte, localização, consulta e modalidade, confiança etc.
+    pub meta: Vec<(String, String)>,
+    /// Trecho reconhecido, literal.
+    pub snippet: String,
+    /// Trechos literais de `snippet` (caracteres) a marcar em amarelo.
+    pub marks: Vec<(usize, usize)>,
+    /// Regiões a marcar na imagem (frações da imagem).
+    pub rects: Vec<NormRect>,
 }
 
 pub struct ReportOccurrence {
@@ -75,6 +120,8 @@ pub struct ReportOccurrence {
     pub text: String,
     /// Avisos do sistema sobre esta ocorrência (fonte ausente, glifos…).
     pub notices: Vec<String>,
+    /// Trechos literais de `text` (posições em caracteres) marcados em amarelo.
+    pub marks: Vec<(usize, usize)>,
 }
 
 // ---------------------------------------------------------------------------
@@ -117,6 +164,86 @@ pub fn normalize_text(text: &str) -> (String, usize) {
         }
     }
     (out, omitted)
+}
+
+/// Como `normalize_text`, mas também leva junto, para cada caractere do texto
+/// normalizado, se ele está dentro de algum intervalo marcado (`ranges`, em
+/// caracteres do texto ORIGINAL). Deve permanecer em sincronia com `normalize_text`.
+pub fn normalize_with_marks(text: &str, ranges: &[(usize, usize)]) -> (String, Vec<bool>) {
+    let chars: Vec<char> = text.chars().collect();
+    let marked = |i: usize| ranges.iter().any(|(s, e)| i >= *s && i < *e);
+    let mut out = String::with_capacity(text.len());
+    let mut flags: Vec<bool> = Vec::with_capacity(chars.len());
+    let mut i = 0usize;
+    while i < chars.len() {
+        let c = chars[i];
+        let m = marked(i);
+        match c {
+            '\r' => {
+                if chars.get(i + 1) == Some(&'\n') {
+                    i += 1;
+                }
+                out.push('\n');
+                flags.push(m);
+            }
+            '\n' | '\u{2028}' | '\u{2029}' | '\u{000B}' | '\u{000C}' | '\u{0085}' => {
+                out.push('\n');
+                flags.push(m);
+            }
+            '\t' => {
+                for _ in 0..4 {
+                    out.push(' ');
+                    flags.push(m);
+                }
+            }
+            c if c.is_control() || is_invisible_format(c) => {}
+            c => {
+                out.push(c);
+                flags.push(m);
+            }
+        }
+        i += 1;
+    }
+    (out, flags)
+}
+
+/// Para cada linha produzida por `wrap`, os intervalos (em caracteres da linha)
+/// marcados. As linhas são subsequências do texto normalizado em que só espaços
+/// e quebras foram descartados; o alinhamento percorre o texto em ordem.
+fn align_marks(norm: &[char], flags: &[bool], lines: &[String]) -> Vec<Vec<(usize, usize)>> {
+    let mut pos = 0usize;
+    let mut out = Vec::with_capacity(lines.len());
+    for line in lines {
+        let mut marks: Vec<(usize, usize)> = Vec::new();
+        let mut run: Option<usize> = None;
+        let mut count = 0usize;
+        for (ci, c) in line.chars().enumerate() {
+            count = ci + 1;
+            while pos < norm.len() && norm[pos] != c {
+                pos += 1;
+            }
+            let m = if pos < norm.len() {
+                let f = flags[pos];
+                pos += 1;
+                f
+            } else {
+                false
+            };
+            match (m, run) {
+                (true, None) => run = Some(ci),
+                (false, Some(s)) => {
+                    marks.push((s, ci));
+                    run = None;
+                }
+                _ => {}
+            }
+        }
+        if let Some(s) = run {
+            marks.push((s, count));
+        }
+        out.push(marks);
+    }
+    out
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -236,6 +363,8 @@ struct Layout {
     pages: Vec<String>,
     /// Topo livre da página atual (coordenada PDF, origem embaixo).
     y: f32,
+    /// Índice em `ReportDocument::visuals` de cada imagem incorporada (nome `/Im{n}`).
+    image_slots: Vec<usize>,
 }
 
 fn num(v: f32) -> String {
@@ -258,6 +387,7 @@ impl Layout {
             fonts: [Font::new(REGULAR_TTF, "DejaVuSans")?, Font::new(BOLD_TTF, "DejaVuSans-Bold")?],
             pages: Vec::new(),
             y: 0.0,
+            image_slots: Vec::new(),
         };
         layout.new_page();
         Ok(layout)
@@ -396,8 +526,26 @@ impl Layout {
                 self.text_at(FontId::Bold, size, INK, MARGIN_X + BAR_W + BOX_PAD_X, baseline, key);
             }
             let x = MARGIN_X + BAR_W + BOX_PAD_X + if line.indented { KEY_COL } else { 0.0 };
+            // O amarelo vai ANTES do texto: fica atrás dele e não o esconde.
+            self.highlight_runs(size, x, bottom, line_h, &line.text, &line.marks);
             self.text_at(FontId::Regular, size, INK, x, baseline, &line.text);
             self.y = bottom;
+        }
+    }
+
+    /// Retângulos amarelos atrás dos trechos `marks` (caracteres) de `text`.
+    fn highlight_runs(&mut self, size: f32, x: f32, bottom: f32, line_h: f32, text: &str, marks: &[(usize, usize)]) {
+        for (start, end) in marks {
+            let chars: Vec<char> = text.chars().collect();
+            let end = (*end).min(chars.len());
+            if *start >= end {
+                continue;
+            }
+            let before: String = chars[..*start].iter().collect();
+            let inside: String = chars[*start..end].iter().collect();
+            let x0 = x + self.fonts[0].width(&before, size);
+            let w = self.fonts[0].width(&inside, size);
+            self.rect(YELLOW, x0 - 0.6, bottom + 1.0, w + 1.2, line_h - 2.0);
         }
     }
 
@@ -409,6 +557,192 @@ impl Layout {
         self.gap(1.5);
     }
 
+    fn centered(&mut self, font: FontId, size: f32, color: Color, x: f32, w: f32, baseline: f32, text: &str) {
+        let tw = self.fonts[font.index()].width(text, size);
+        self.text_at(font, size, color, x + ((w - tw) / 2.0).max(0.0), baseline, text);
+    }
+
+    /// Linhas da coluna de descrição (já quebradas para a largura da coluna).
+    fn description_lines(&self, v: &ReportVisual) -> Vec<DescLine> {
+        let mut out: Vec<DescLine> = Vec::new();
+        self.add_desc(&mut out, "Descrição da evidência", true, 11.0, INK, 16.0, &[]);
+        for entry in &v.entries {
+            self.add_desc(&mut out, &entry.title, true, 9.5, INK, 14.0, &[]);
+            for (key, value) in &entry.meta {
+                self.add_desc(&mut out, &format!("{key}: {value}"), false, 8.0, MUTED, 11.5, &[]);
+            }
+            out.push(DescLine { text: String::new(), bold: false, size: 8.0, color: MUTED, lh: 7.0, rule: true, marks: Vec::new() });
+            self.add_desc(&mut out, "Trecho reconhecido (literal)", true, 8.0, MUTED, 12.0, &[]);
+            let total = entry.snippet.chars().count();
+            let (snippet, cut): (String, bool) = if total > MAX_VISUAL_SNIPPET {
+                (entry.snippet.chars().take(MAX_VISUAL_SNIPPET).collect(), true)
+            } else {
+                (entry.snippet.clone(), false)
+            };
+            self.add_desc(&mut out, &snippet, false, 9.0, INK, DESC_LH, &entry.marks);
+            if cut {
+                self.add_desc(&mut out, "[trecho truncado aqui; o texto completo está na seção de trechos]", false, 7.5, MUTED, 11.0, &[]);
+            }
+            out.push(DescLine { text: String::new(), bold: false, size: 8.0, color: MUTED, lh: 6.0, rule: false, marks: Vec::new() });
+        }
+        out
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn add_desc(&self, out: &mut Vec<DescLine>, text: &str, bold: bool, size: f32, color: Color, lh: f32, ranges: &[(usize, usize)]) {
+        let font = if bold { FontId::Bold } else { FontId::Regular };
+        let (normalized, flags) = normalize_with_marks(text, ranges);
+        let lines = self.wrap(font, size, &normalized, DESC_W);
+        let norm_chars: Vec<char> = normalized.chars().collect();
+        let marks = align_marks(&norm_chars, &flags, &lines);
+        for (line, m) in lines.into_iter().zip(marks) {
+            out.push(DescLine { text: line, bold, size, color, lh, rule: false, marks: m });
+        }
+    }
+
+    /// Bloco de evidência visual: imagem à esquerda (com o trecho marcado em
+    /// amarelo) e descrição à direita. A imagem e a identificação essencial
+    /// ficam sempre juntas; só o fim de um trecho muito longo continua abaixo.
+    fn visual_block(&mut self, doc: &ReportDocument, index: usize) {
+        let v = &doc.visuals[index];
+        let (pw, ph) = (v.image.pixel_width.max(1) as f32, v.image.pixel_height.max(1) as f32);
+        let scale = (IMG_COL_W / pw).min(MAX_IMG_H / ph).min(2.0);
+        let (dw, dh) = (pw * scale, ph * scale);
+        let tag_h = if v.entries.len() > 1 { 12.0 } else { 0.0 };
+        let caption_lines = self.wrap(FontId::Regular, 7.5, &normalize_text(&v.caption).0, IMG_COL_W);
+        let img_h = tag_h + dh + 14.0 + caption_lines.len() as f32 * 10.0;
+        let desc = self.description_lines(v);
+        let desc_h: f32 = desc.iter().map(|d| d.lh).sum();
+        let block_h = img_h.max(desc_h.min(MAX_BLOCK_H));
+
+        let heading_lines = self.wrap(FontId::Bold, 12.0, &normalize_text(&v.heading).0, CONTENT_W);
+        self.gap(10.0);
+        self.ensure(block_h + 28.0 + heading_lines.len() as f32 * 17.0);
+        self.rule();
+        self.gap(4.0);
+        self.flow(FontId::Bold, 12.0, INK, 17.0, MARGIN_X, CONTENT_W, &v.heading);
+        self.gap(4.0);
+        self.ensure(block_h);
+
+        let top = self.y;
+        let slot = self.image_slots.len();
+        self.image_slots.push(index);
+
+        // Coluna esquerda: imagem original + destaques amarelos.
+        let x0 = MARGIN_X;
+        let ybot = top - tag_h - dh;
+        let mut ops = format!(
+            "q {} 0 0 {} {} {} cm /Im{} Do Q\n{} RG 0.5 w {} {} {} {} re S\n",
+            num(dw), num(dh), num(x0), num(ybot), slot, rgb(RULE), num(x0), num(ybot), num(dw), num(dh)
+        );
+        let to_pdf = |r: &NormRect| -> (f32, f32, f32, f32) {
+            (x0 + r.x * dw, ybot + dh - (r.y + r.h) * dh, r.w * dw, r.h * dh)
+        };
+        // Preenchimento com mistura Multiply: o texto escuro da imagem continua visível.
+        ops.push_str("q /GS1 gs\n");
+        for e in &v.entries {
+            for r in &e.rects {
+                let (x, y, w, h) = to_pdf(r);
+                ops.push_str(&format!("{} rg {} {} {} {} re f\n", rgb(YELLOW), num(x), num(y), num(w), num(h)));
+            }
+        }
+        ops.push_str(&format!("Q\nq {} RG 1.1 w\n", rgb(YELLOW_EDGE)));
+        for e in &v.entries {
+            for r in &e.rects {
+                let (x, y, w, h) = to_pdf(r);
+                ops.push_str(&format!("{} {} {} {} re S\n", num(x), num(y), num(w), num(h)));
+            }
+        }
+        ops.push_str("Q\n");
+        self.page().push_str(&ops);
+
+        // Etiquetas numeradas (só quando há várias ocorrências na mesma imagem).
+        if v.entries.len() > 1 {
+            for e in &v.entries {
+                let Some(first) = e.rects.first() else { continue };
+                let (rx, ry, rw, rh) = to_pdf(first);
+                let label = format!("{:03}", e.number);
+                let tag_w = 22.0f32;
+                let cx = (rx + rw / 2.0).clamp(x0 + tag_w / 2.0, x0 + dw - tag_w / 2.0);
+                let tag_y = top - 10.0;
+                let line = format!(
+                    "q {} RG 0.4 w {} {} m {} {} l S Q\n",
+                    rgb(YELLOW_EDGE), num(cx), num(tag_y), num(rx + rw / 2.0), num(ry + rh)
+                );
+                self.page().push_str(&line);
+                self.rect(YELLOW, cx - tag_w / 2.0, tag_y, tag_w, 10.0);
+                self.centered(FontId::Bold, 6.5, INK, cx - tag_w / 2.0, tag_w, tag_y + 2.8, &label);
+            }
+        }
+
+        // Legenda centralizada sob a imagem.
+        let mut cy = ybot - 11.0;
+        self.centered(FontId::Bold, 8.5, INK, x0, dw.max(IMG_COL_W * 0.6), cy, "Imagem original");
+        for line in &caption_lines {
+            cy -= 10.0;
+            self.centered(FontId::Regular, 7.5, MUTED, x0, dw.max(IMG_COL_W * 0.6), cy, line);
+        }
+
+        // Coluna direita: descrição; o que não couber continua abaixo.
+        let dx = MARGIN_X + IMG_COL_W + COL_GAP;
+        let limit = top - block_h;
+        let mut y = top;
+        let mut used = 0usize;
+        for line in &desc {
+            if y - line.lh < limit {
+                break;
+            }
+            y -= line.lh;
+            if line.rule {
+                self.rect(RULE, dx, y + line.lh / 2.0, DESC_W, 0.6);
+            } else if !line.text.is_empty() {
+                let font = if line.bold { FontId::Bold } else { FontId::Regular };
+                let (asc, d) = self.fonts[font.index()].ascent_descent(line.size);
+                let baseline = y + d + (line.lh - asc - d) / 2.0;
+                self.highlight_runs(line.size, dx, y, line.lh, &line.text, &line.marks);
+                self.text_at(font, line.size, line.color, dx, baseline, &line.text);
+            }
+            used += 1;
+        }
+        self.y = top - block_h - 4.0;
+        if used < desc.len() {
+            self.flow(FontId::Bold, 8.0, MUTED, 12.0, MARGIN_X, CONTENT_W, "(continuação da descrição)");
+            for line in &desc[used..] {
+                if line.rule || line.text.is_empty() {
+                    self.gap(line.lh);
+                    continue;
+                }
+                self.ensure(line.lh);
+                self.y -= line.lh;
+                let font = if line.bold { FontId::Bold } else { FontId::Regular };
+                let (asc, d) = self.fonts[font.index()].ascent_descent(line.size);
+                let baseline = self.y + d + (line.lh - asc - d) / 2.0;
+                self.highlight_runs(line.size, MARGIN_X, self.y, line.lh, &line.text, &line.marks);
+                self.text_at(font, line.size, line.color, MARGIN_X, baseline, &line.text);
+            }
+        }
+        self.gap(4.0);
+
+        let mut notices = v.notices.clone();
+        notices.extend(v.image.notices.iter().cloned());
+        if !notices.is_empty() {
+            self.warning_box("AVISOS SOBRE ESTA EVIDÊNCIA VISUAL", &notices);
+        }
+    }
+
+    fn warning_box(&mut self, title: &str, notices: &[String]) {
+        self.label(title, WARN_BAR);
+        let width = CONTENT_W - BAR_W - 2.0 * BOX_PAD_X;
+        let mut lines = vec![padding_line()];
+        for n in notices {
+            for text in self.wrap(FontId::Regular, META, &normalize_text(n).0, width) {
+                lines.push(BoxLine { key: None, text, indented: false, marks: Vec::new() });
+            }
+        }
+        lines.push(padding_line());
+        self.boxed_lines(&lines, WARN_BG, WARN_BAR, META, META_LH);
+    }
+
     fn rule(&mut self) {
         self.ensure(6.0);
         self.y -= 3.0;
@@ -417,11 +751,23 @@ impl Layout {
     }
 }
 
+struct DescLine {
+    text: String,
+    bold: bool,
+    size: f32,
+    color: Color,
+    lh: f32,
+    rule: bool,
+    marks: Vec<(usize, usize)>,
+}
+
 struct BoxLine {
     key: Option<String>,
     text: String,
     /// `true` quando `text` fica deslocado pela coluna de rótulos.
     indented: bool,
+    /// Trechos de `text` (em caracteres) marcados em amarelo.
+    marks: Vec<(usize, usize)>,
 }
 
 /// Pares rótulo/valor em linhas de caixa. O valor quebra dentro da coluna.
@@ -436,6 +782,7 @@ fn meta_lines(layout: &Layout, pairs: &[(String, String)], size: f32) -> Vec<Box
                 key: if i == 0 { Some(key.clone()) } else { None },
                 text: line,
                 indented: true,
+                marks: Vec::new(),
             });
         }
     }
@@ -448,18 +795,29 @@ fn padding_line() -> BoxLine {
         key: None,
         text: String::new(),
         indented: false,
+        marks: Vec::new(),
     }
 }
 
+#[allow(dead_code)]
 fn text_lines(layout: &Layout, text: &str, size: f32) -> Vec<BoxLine> {
+    text_lines_marked(layout, text, &[], size)
+}
+
+/// Linhas do trecho extraído, com os intervalos literais marcados em amarelo.
+fn text_lines_marked(layout: &Layout, text: &str, ranges: &[(usize, usize)], size: f32) -> Vec<BoxLine> {
     let width = CONTENT_W - BAR_W - 2.0 * BOX_PAD_X;
-    let (normalized, _) = normalize_text(text);
+    let (normalized, flags) = normalize_with_marks(text, ranges);
+    let lines = layout.wrap(FontId::Regular, size, &normalized, width);
+    let norm_chars: Vec<char> = normalized.chars().collect();
+    let marks = align_marks(&norm_chars, &flags, &lines);
     let mut out = vec![padding_line()];
-    for line in layout.wrap(FontId::Regular, size, &normalized, width) {
+    for (line, m) in lines.into_iter().zip(marks) {
         out.push(BoxLine {
             key: None,
             text: line,
             indented: false,
+            marks: m,
         });
     }
     out.push(padding_line());
@@ -500,6 +858,12 @@ fn build_layout(doc: &ReportDocument) -> Result<Layout, AppError> {
     );
     let lines = meta_lines(&l, &doc.summary, META);
     l.boxed_lines(&lines, SYS_BG, SYS_BAR, META, META_LH);
+    if !doc.index.is_empty() {
+        l.gap(6.0);
+        l.label("ÍNDICE DAS OCORRÊNCIAS SELECIONADAS", SYS_BAR);
+        let lines = meta_lines(&l, &doc.index, META);
+        l.boxed_lines(&lines, SYS_BG, SYS_BAR, META, META_LH);
+    }
     l.gap(10.0);
     for paragraph in &doc.disclaimer {
         l.flow(FontId::Regular, 8.5, MUTED, 12.0, MARGIN_X, CONTENT_W, paragraph);
@@ -509,7 +873,7 @@ fn build_layout(doc: &ReportDocument) -> Result<Layout, AppError> {
     // Ocorrências
     for occ in &doc.occurrences {
         let meta = meta_lines(&l, &occ.system_meta, META);
-        let text = text_lines(&l, &occ.text, BODY);
+        let text = text_lines_marked(&l, &occ.text, &occ.marks, BODY);
         let heading_lines = l.wrap(FontId::Bold, 12.0, &normalize_text(&occ.heading).0, CONTENT_W);
         // Mantém título, metadados e o início do trecho juntos.
         let lead = heading_lines.len() as f32 * 17.0
@@ -546,6 +910,7 @@ fn build_layout(doc: &ReportDocument) -> Result<Layout, AppError> {
                             key: None,
                             text,
                             indented: false,
+                            marks: Vec::new(),
                         })
                         .collect::<Vec<_>>()
                 }))
@@ -553,6 +918,31 @@ fn build_layout(doc: &ReportDocument) -> Result<Layout, AppError> {
                 .collect();
             l.boxed_lines(&lines, WARN_BG, WARN_BAR, META, META_LH);
         }
+    }
+
+    // Evidências visuais: imagem à esquerda, descrição à direita.
+    if !doc.visuals.is_empty() {
+        l.gap(14.0);
+        l.ensure(120.0);
+        l.flow(FontId::Bold, 15.0, INK, 21.0, MARGIN_X, CONTENT_W, "Evidências visuais");
+        l.flow(
+            FontId::Regular,
+            8.5,
+            MUTED,
+            12.0,
+            MARGIN_X,
+            CONTENT_W,
+            "Cada bloco reproduz a imagem original (à esquerda) com o trecho encontrado marcado em amarelo e a descrição da evidência (à direita). O destaque é desenhado sobre a imagem apenas neste relatório; o arquivo original não é alterado.",
+        );
+        for index in 0..doc.visuals.len() {
+            l.visual_block(doc, index);
+        }
+    }
+
+    if !doc.limitations.is_empty() {
+        l.gap(12.0);
+        l.ensure(80.0);
+        l.warning_box("AVISOS E LIMITAÇÕES DESTA EXPORTAÇÃO", &doc.limitations);
     }
     Ok(l)
 }
@@ -686,6 +1076,35 @@ fn font_objects(font: &Font, first: usize) -> Result<Vec<Vec<u8>>, AppError> {
     Ok(vec![type0.into_bytes(), cid.into_bytes(), descriptor.into_bytes(), file, tounicode])
 }
 
+fn image_object(image: &VisualImage) -> Result<Vec<u8>, AppError> {
+    let (w, h) = (image.pixel_width, image.pixel_height);
+    match &image.data {
+        ImageData::Jpeg { data, gray } => {
+            let cs = if *gray { "/DeviceGray" } else { "/DeviceRGB" };
+            let mut out = format!(
+                "<< /Type /XObject /Subtype /Image /Width {w} /Height {h} /ColorSpace {cs} \
+                 /BitsPerComponent 8 /Filter /DCTDecode /Length {} >>\nstream\n",
+                data.len()
+            )
+            .into_bytes();
+            out.extend_from_slice(data);
+            out.extend_from_slice(b"\nendstream");
+            Ok(out)
+        }
+        ImageData::Raw { data, gray } => {
+            let cs = if *gray { "/DeviceGray" } else { "/DeviceRGB" };
+            let channels = if *gray { 1usize } else { 3 };
+            if data.len() != w as usize * h as usize * channels {
+                return Err(internal("imagem com tamanho inconsistente"));
+            }
+            stream_object(
+                &format!("/Type /XObject /Subtype /Image /Width {w} /Height {h} /ColorSpace {cs} /BitsPerComponent 8"),
+                data,
+            )
+        }
+    }
+}
+
 pub fn render(doc: &ReportDocument) -> Result<Vec<u8>, AppError> {
     let mut layout = build_layout(doc)?;
     decorate(&mut layout, doc);
@@ -710,12 +1129,23 @@ pub fn render(doc: &ReportDocument) -> Result<Vec<u8>, AppError> {
     );
     objects.extend(font_objects(&layout.fonts[0], 4)?);
     objects.extend(font_objects(&layout.fonts[1], 9)?);
+    // Imagens (um objeto cada) e o estado gráfico do destaque, depois das páginas.
+    let image_first = first_page_obj + 2 * page_count;
+    let gs_obj = image_first + layout.image_slots.len();
+    let resources = if layout.image_slots.is_empty() {
+        "<< /Font << /F1 4 0 R /F2 9 0 R >> >>".to_string()
+    } else {
+        let xobjects: String = (0..layout.image_slots.len())
+            .map(|slot| format!("/Im{slot} {} 0 R ", image_first + slot))
+            .collect();
+        format!("<< /Font << /F1 4 0 R /F2 9 0 R >> /XObject << {xobjects}>> /ExtGState << /GS1 {gs_obj} 0 R >> >>")
+    };
     for (i, content) in layout.pages.iter().enumerate() {
         let page_obj = first_page_obj + 2 * i;
         objects.push(
             format!(
                 "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {} {}] \
-                 /Resources << /Font << /F1 4 0 R /F2 9 0 R >> >> /Contents {} 0 R >>",
+                 /Resources {resources} /Contents {} 0 R >>",
                 num(PAGE_W),
                 num(PAGE_H),
                 page_obj + 1
@@ -723,6 +1153,12 @@ pub fn render(doc: &ReportDocument) -> Result<Vec<u8>, AppError> {
             .into_bytes(),
         );
         objects.push(stream_object("", content.as_bytes())?);
+    }
+    if !layout.image_slots.is_empty() {
+        for visual_index in &layout.image_slots {
+            objects.push(image_object(&doc.visuals[*visual_index].image)?);
+        }
+        objects.push(b"<< /Type /ExtGState /ca 0.9 /CA 1 /BM /Multiply >>".to_vec());
     }
 
     let mut out: Vec<u8> = b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n".to_vec();

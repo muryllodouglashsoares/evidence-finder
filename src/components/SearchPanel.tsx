@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { useSearch } from "../hooks/useSearch";
+import { useSemantic } from "../hooks/useSemantic";
+import { modeUsable } from "../lib/semantic";
+import { SemanticPanel } from "./SemanticPanel";
 import { FORMAT_LABEL } from "../lib/documents";
 import {
   canReview,
@@ -19,12 +22,15 @@ import {
   EMPTY_FORM,
   hasActiveFilters,
   invalidPeriod,
+  MODE_HELP,
+  MODE_LABEL,
   SEARCH_FORMATS,
   SORT_LABEL,
   summarizeIndex,
   validateQuery,
 } from "../lib/search";
 import type { SearchForm } from "../lib/search";
+import type { SearchMode } from "../types/contracts";
 import { core, normalizeError } from "../services/core";
 import type { DocFormat, DocumentInfo, SearchHit, SearchSort } from "../types/contracts";
 import { ContextDialog } from "./ContextDialog";
@@ -74,7 +80,8 @@ export function SearchPanel({
     [form, committed, existingIds],
   );
   // A seleção pertence a UMA pesquisa: se consulta, filtros ou documentos mudam, ela é descartada.
-  const scope = selectionScope(committed, activeFilters, signature);
+  // A modalidade EXECUTADA (pode ter caído para lexical) define o conjunto de resultados.
+  const scope = selectionScope(committed, activeFilters, signature, state.mode);
   useEffect(() => {
     dispatchSelection({ type: "rescope", scope });
     setExportOpen(false);
@@ -94,6 +101,8 @@ export function SearchPanel({
       if (committed !== null) execute(form, committed);
     };
   });
+  // Índice semântico: ao terminar de indexar, a pesquisa atual é refeita com o índice novo.
+  const semantic = useSemantic(projectId, () => rerun.current());
   const firstSignature = useRef(signature);
   useEffect(() => {
     if (firstSignature.current === signature) return;
@@ -103,7 +112,7 @@ export function SearchPanel({
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    const problem = validateQuery(form.query) ?? (invalidPeriod(form) ? "A data inicial é posterior à data final." : null);
+    const problem = validateQuery(form.query, form.mode) ?? (invalidPeriod(form) ? "A data inicial é posterior à data final." : null);
     setFormError(problem);
     if (problem) return;
     onNotice(null);
@@ -212,6 +221,42 @@ export function SearchPanel({
   return (
     <section className="search" aria-labelledby="search-title">
       {heading}
+
+      <SemanticPanel
+        status={semantic.status}
+        loading={semantic.loading}
+        error={semantic.error}
+        onStart={() => void semantic.start()}
+        onCancel={() => void semantic.cancel()}
+        onClear={() => void semantic.clear()}
+        onRecheck={() => void semantic.refresh()}
+      />
+
+      <fieldset className="modes">
+        <legend>Modalidade</legend>
+        {(Object.keys(MODE_LABEL) as SearchMode[]).map((mode) => {
+          const usable = modeUsable(mode, semantic.status);
+          return (
+            <label key={mode} className="modes__opt" title={usable ? MODE_HELP[mode] : "Instale o modelo local para usar esta modalidade."}>
+              <input
+                type="radio"
+                name="search-mode"
+                value={mode}
+                checked={form.mode === mode}
+                disabled={!usable}
+                onChange={() => {
+                  setFormError(null);
+                  change({ mode });
+                }}
+              />
+              {MODE_LABEL[mode]}
+            </label>
+          );
+        })}
+      </fieldset>
+      <p className="small muted" id="mode-help">
+        {MODE_HELP[form.mode]}
+      </p>
 
       <form className="searchbar" onSubmit={submit} role="search" aria-label="Pesquisar nos documentos">
         <label className="field searchbar__field">
@@ -337,6 +382,12 @@ export function SearchPanel({
         </p>
       ) : null}
 
+      {state.status === "done" && state.notice ? (
+        <p className="small extract__warn" role="status">
+          {state.notice}
+        </p>
+      ) : null}
+
       <div className="results" aria-live="polite" aria-busy={state.status === "loading"}>
         {state.status === "idle" ? (
           <p className="muted">
@@ -454,6 +505,7 @@ export function SearchPanel({
         query={committed ?? ""}
         filters={activeFilters}
         items={selection.items}
+        mode={state.mode}
         onClose={() => setExportOpen(false)}
         onExported={(folderName, warnings) =>
           onNotice({

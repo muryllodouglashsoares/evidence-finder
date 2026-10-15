@@ -10,7 +10,9 @@ Permitir que a pessoa reúna material em projetos locais (até ~500 arquivos por
 
 Princípios: privacidade, rastreabilidade das fontes, confiabilidade e funcionamento offline.
 
-## Estado atual (Fase 5)
+## Estado atual (Fase 7 — escrita, ainda não compilada nem testada)
+
+> **Aviso:** o código da Fase 7 foi escrito e revisado à mão em um ambiente sem `cargo`, `npm` nem rede. Ele **ainda não foi compilado e os testes novos nunca foram executados**. Rode `npm run check` e `cargo test` (ver `docs/FASE7.md`) antes de considerar a fase concluída.
 
 | Funcionalidade | Estado |
 | --- | --- |
@@ -31,7 +33,12 @@ Princípios: privacidade, rastreabilidade das fontes, confiabilidade e funcionam
 | Filtros (documento, formato, período de importação) e ordenação, aplicados no núcleo | Implementado (Fase 4) |
 | Contexto do trecho (vizinhos do mesmo documento) e abertura segura do original | Implementado (Fase 4) |
 | Seleção de resultados, revisão, relatório PDF, pasta de evidências com fontes verificadas por SHA-256 e `manifest.json` | Implementado (Fase 5; pendente de validação no Windows) |
-| Busca semântica / IA local | **Não implementado** (Fase 7) |
+| Exclusão segura de projeto (cópias gerenciadas + banco; nunca os originais), com confirmação | Implementado (Fase 6) |
+| Recuperação de resíduos (`*.part`, pastas temporárias de exportação abandonadas) | Implementado (Fase 6) |
+| Tokens de pasta vinculados à finalidade, validação de identificadores no núcleo | Implementado (Fase 6) |
+| Busca semântica local (exata / por significado / híbrida), modelo baixado e conferido pelos scripts `.bat`, busca sem rede | Implementado no código (Fase 7) — **não compilado/testado**; qualidade semântica não medida |
+| Índice semântico (migração aditiva v5, vetores por conteúdo, invalidação, indexação cancelável) | Implementado no código (Fase 7) — **não compilado/testado** |
+| PDF com destaque amarelo nos trechos e evidências visuais (imagem à esquerda, descrição à direita) | Implementado no código (Fase 7) — **não compilado/testado**; sem imagem para PDF de texto digital |
 
 ## Como importar documentos
 
@@ -76,7 +83,7 @@ Nenhum serviço pago, conta externa, telemetria ou API de IA.
 
 1. Baixe e extraia o ZIP em uma pasta de caminho curto (ex.: `C:\EvidenceFinder`), **não** dentro do OneDrive.
 2. Dê dois cliques em **`INICIAR.bat`**.
-3. Na primeira vez, o script instala sozinho o que faltar (Node.js, Rust, Ferramentas C++, WebView2 e o Tesseract OCR com o idioma português) via `winget`, compila o app e o abre. Se o Windows pedir permissão de administrador, clique em **Sim**. Leva de 10 a 30+ minutos e precisa de internet e vários GB livres.
+3. Na primeira vez, o script instala sozinho o que faltar (Node.js, Rust, Ferramentas C++, WebView2, o Tesseract OCR com o idioma português e o modelo de busca semântica, ~470 MB, conferido por SHA-256) via `winget`, compila o app e o abre. Se o Windows pedir permissão de administrador, clique em **Sim**. Leva de 10 a 30+ minutos e precisa de internet e vários GB livres.
 4. Nas próximas vezes, `INICIAR.bat` abre o app em segundos. **Depois de atualizar o código (como nesta Fase 4), use `RECOMPILAR.bat`:** o `INICIAR.bat` só abre o executável já compilado e, se ele existir, não recompila.
 
 Requer Windows 10 (1809+) ou 11 com o "Instalador de Aplicativo" (winget). Se algo falhar, a mensagem aparece na janela e o log fica em `instalacao-log.txt`. O script também instala o Tesseract (`UB-Mannheim.TesseractOCR`) e baixa `por.traineddata` para a pasta `tessdata` dele (pode pedir permissão de administrador); se isso falhar, mostra um aviso e o app abre mesmo assim, sem OCR. Os scripts ainda não foram testados em um Windows real por quem escreveu o código.
@@ -109,7 +116,7 @@ npm run test:rust      # cargo test (núcleo: criação, abertura, persistência
 npm run check          # todos os anteriores
 ```
 
-Os testes Rust (164: 125 das fases anteriores + 39 da Fase 5) cobrem, além da Fase 1: importação de PNG/JPEG/TXT/PDF nas duas modalidades, texto colado, lotes com falhas individuais, persistência após reabrir, duplicatas, arquivos inexistentes/sem permissão, falhas de cópia, nomes e caminhos maliciosos (banco adulterado, pasta `files` substituída por arquivo ou atalho), remoção sem tocar nos originais, limite de 500, integridade das cópias, arquivos modificados e migração v1→v2 preservando dados. Os da Fase 3 cobrem decodificação e segmentação de texto, PDF com páginas, PDF digitalizado com OCR real (JPEG, Flate cinza e 1 bit), PNG/JPEG com e sem texto, dependência de OCR ausente, arquivos corrompidos, falha individual sem interromper o lote, reprocessamento sem duplicar, detecção de arquivo alterado por hash, extrator desatualizado, persistência após reabrir, remoção em cascata, migração v2→v3 e limites. Os testes de OCR real são pulados (com aviso em stderr) se o Tesseract com idioma `por` não estiver instalado; os demais rodam sempre. Os da Fase 4 cobrem a montagem segura da consulta, busca por palavra/frase/combinação, acentos e maiúsculas, caracteres especiais e operadores, ordenação por relevância, prévia e destaque, filtros combinados, paginação, isolamento entre projetos, contexto, migração de um projeto da Fase 3 (v3→v4) sem reimportar, ausência de duplicação ao reprocessar, remoção em cascata no índice, recuperação de um índice interrompido, consistência ao reabrir e a validação da abertura da fonte (ausente, alterada, outro projeto, extensão adulterada). Os testes do front (Vitest) cobrem contratos com o núcleo (só ids/tokens, nunca caminhos), validação da consulta, filtros, descrição da origem e o redutor que descarta respostas obsoletas. Os da Fase 5 estão descritos em "Exportação de evidências".
+Os testes Rust (181: 125 das fases anteriores + 39 da Fase 5 + 17 da Fase 6) cobrem, além da Fase 1: importação de PNG/JPEG/TXT/PDF nas duas modalidades, texto colado, lotes com falhas individuais, persistência após reabrir, duplicatas, arquivos inexistentes/sem permissão, falhas de cópia, nomes e caminhos maliciosos (banco adulterado, pasta `files` substituída por arquivo ou atalho), remoção sem tocar nos originais, limite de 500, integridade das cópias, arquivos modificados e migração v1→v2 preservando dados. Os da Fase 3 cobrem decodificação e segmentação de texto, PDF com páginas, PDF digitalizado com OCR real (JPEG, Flate cinza e 1 bit), PNG/JPEG com e sem texto, dependência de OCR ausente, arquivos corrompidos, falha individual sem interromper o lote, reprocessamento sem duplicar, detecção de arquivo alterado por hash, extrator desatualizado, persistência após reabrir, remoção em cascata, migração v2→v3 e limites. Os testes de OCR real são pulados (com aviso em stderr) se o Tesseract com idioma `por` não estiver instalado; os demais rodam sempre. Os da Fase 4 cobrem a montagem segura da consulta, busca por palavra/frase/combinação, acentos e maiúsculas, caracteres especiais e operadores, ordenação por relevância, prévia e destaque, filtros combinados, paginação, isolamento entre projetos, contexto, migração de um projeto da Fase 3 (v3→v4) sem reimportar, ausência de duplicação ao reprocessar, remoção em cascata no índice, recuperação de um índice interrompido, consistência ao reabrir e a validação da abertura da fonte (ausente, alterada, outro projeto, extensão adulterada). Os testes do front (Vitest) cobrem contratos com o núcleo (só ids/tokens, nunca caminhos), validação da consulta, filtros, descrição da origem e o redutor que descarta respostas obsoletas. Os da Fase 5 estão descritos em "Exportação de evidências".
 
 ## Build
 
@@ -171,7 +178,7 @@ Limitações (não prometemos segurança absoluta):
 - A detecção de arquivo alterado em modo "referência" usa tamanho e data de modificação na listagem; só **Verificar** compara o conteúdo.
 - Arquivos que falham na importação não geram registro (são só relatados no resumo); é preciso selecioná-los de novo para tentar outra vez.
 - Atalho/junção do Windows escolhido como arquivo é resolvido para o destino real antes de importar.
-- Importações simultâneas são serializadas; se o app fechar no meio de uma cópia, pode sobrar um arquivo `*.part` em `files/` (sem registro; pode ser apagado).
+- Importações simultâneas são serializadas; se o app fechar no meio de uma cópia, pode sobrar um arquivo `*.part` em `files/`. Desde a Fase 6 ele é removido automaticamente na próxima abertura do projeto (somente se tiver mais de 10 minutos e nome no formato `<uuid>.part`).
 - Sem instalador assinado; o Windows SmartScreen pode alertar. Interface somente em português do Brasil.
 
 ## Extração de texto (Fase 3)
@@ -288,6 +295,62 @@ O PDF é escrito diretamente pelo módulo `pdf_report.rs`; não há serviço de 
 - Fontes de documentos exportados em modo "referência" são lidas do caminho registrado no momento da exportação; o hash é a única garantia de que são as mesmas importadas.
 - Sem pré-visualização do PDF no aplicativo e sem botão para abrir a pasta criada (o caminho é exibido).
 
-## Próxima fase (não iniciada)
+## Segurança e confiabilidade (Fase 6)
 
-**Fase 6 — segurança e confiabilidade:** revisão das permissões, arquivos temporários, logs e testes com a rede bloqueada. Antes dela, a Fase 5 precisa ser validada em um Windows real (ver "Limitações da Fase 5").
+Esta seção diferencia o que foi **implementado**, o que foi **testado aqui (Linux)** e o que **depende de validação no Windows**. Não há auditoria profissional de segurança.
+
+### Implementado
+
+- **Auditoria** de capabilities, CSP, comandos, caminhos, temporários, banco, logs e dependências. A base das fases anteriores já era sólida (caminhos canônicos, staging de exportação, `create_new`, verificação por hash, extração isolada com `catch_unwind`); a Fase 6 fechou as lacunas abaixo sem reescrever módulos.
+- **Tokens de pasta por finalidade** (`authorization.rs`): um token emitido para "abrir projeto" não vale para "criar projeto" nem para "destino de exportação". Ao exceder 64 tokens, descarta-se só o mais antigo (antes, todos eram apagados). Tokens de arquivo seguem de uso único.
+- **Validação de identificadores no núcleo** (`validation::validate_id`): ids de projeto, documento e tokens de arquivo precisam ter o formato gerado pelo app (≤ 64 caracteres, `[A-Za-z0-9-]`); `documentIds` de extração e a consulta de contexto têm limites de quantidade/tamanho.
+- **Atalho trocado após a seleção**: o caminho escolhido já é canônico; se na importação ele virou um atalho (`symlink_metadata`), a importação é recusada em vez de segui-lo.
+- **Exclusão segura de projeto** (`service::delete_project`, comandos `preview_delete_project` e `delete_project`, botão "Excluir projeto…" nos recentes, com confirmação que informa quantos documentos e cópias gerenciadas serão removidos):
+  - O caminho vem do registro local e o projeto é revalidado pelo **id** (outro projeto na mesma pasta é recusado).
+  - Remove somente `files/<uuid>.<ext>` / `<uuid>.part` (regulares, nunca atalhos), o banco e seus auxiliares (`-journal`, `-wal`, `-shm`). A pasta `files` precisa ser real (atalho: nada é feito).
+  - **Nunca** toca nos originais apenas referenciados, nas exportações geradas nem em itens estranhos dentro da pasta do projeto; `remove_dir` (não recursivo) só apaga a pasta se ficar vazia — caso contrário a interface avisa que itens foram preservados.
+  - Ordem: cópias primeiro, banco por último. Se uma cópia não puder ser excluída (em uso/permissão), o erro é mostrado, o banco permanece, o projeto continua abrível e a exclusão pode ser repetida; nunca se declara sucesso numa exclusão parcial.
+  - Bloqueada durante extração ou exportação em andamento; o projeto aberto é fechado e o registro de recentes é atualizado somente após o sucesso.
+  - Não é exclusão forense: não elimina dados de SSD, backups, Lixeira ou arquivos de recuperação do sistema.
+- **Recuperação após encerramento inesperado:** ao abrir um projeto, `*.part` com mais de 10 minutos e nome gerado pelo app são removidos. No destino de uma exportação, pastas `.EvidenceFinder-temp-*` com mais de 6 horas **e** contendo apenas `evidencias/`, `relatorio.pdf` e `manifest.json` são removidas antes da nova exportação. Pastas com qualquer outro conteúdo, atalhos, exportações finais e arquivos do usuário nunca são removidos.
+- **Lista de recentes ilegível:** mensagem específica (os projetos não são afetados) e o arquivo `app-registry.db` é preservado; nada é apagado ou recriado automaticamente.
+- **Permissões, CSP e rede:** `capabilities/default.json` continua sem permissões; nenhuma alteração de CSP. Um teste automatizado falha se uma permissão, `unsafe-inline`/`unsafe-eval` ou origem remota for adicionada.
+- **Logs e privacidade:** o app não grava logs (sem `println!`/`log`/telemetria); mensagens de erro não incluem caminhos nem conteúdo. O banco de recentes e o do projeto continuam sem criptografia.
+
+### Já estava correto e foi mantido/testado
+
+Exportação em pasta temporária com publicação atômica por `rename` (falhas em cada etapa não deixam pasta aparentemente completa), cópias com hash verificado, extração com hash antes de processar, `quick_check` do SQLite na abertura sem "reparo", migrações aditivas, limite de 500 documentos e de tamanhos.
+
+### Como verificar o funcionamento offline
+
+1. **Testes estáticos (rodam em qualquer sistema):** `npm run test` (frontend: sem `fetch`/`XMLHttpRequest`/`WebSocket`/URLs, sem plugins `@tauri-apps/plugin-*`, `index.html` sem recursos externos) e `npm run test:rust` (nenhum código do núcleo usa `std::net`/clientes HTTP; `Cargo.toml` não declara cliente de rede nem plugin `http`/`fs`/`shell`/`updater`; capabilities vazias; CSP sem origens remotas).
+2. **Execução sem rede (Linux):** `unshare -n npm run test` e `unshare -n cargo test --manifest-path src-tauri/Cargo.toml --offline` (sem interface de rede, `curl` falha). Resultado nesta fase: **todos passaram** (Rust 181, Vitest 65). Isso cobre abrir/criar projeto, importar, extrair (inclusive OCR real quando o Tesseract está instalado), pesquisar e exportar.
+3. **No Windows:** bloqueie o app no firewall (regra de saída) ou desconecte a rede e execute o fluxo completo manualmente — **não foi feito**.
+4. `reqwest` aparece no `Cargo.lock` apenas por causa do `tauri` em alvos **Android/iOS**; `cargo tree --target x86_64-pc-windows-msvc -i reqwest` não o inclui.
+
+### Dependências e licenças
+
+- 289 pacotes Rust no alvo `windows-msvc`: a grande maioria MIT/Apache-2.0; também Unicode-3.0, BSD-3-Clause, Zlib, Unlicense, 0BSD. **MPL-2.0** (cobertura por arquivo, via `tauri`): `cssparser`, `cssparser-macros`, `dtoa-short`, `selectors`, `option-ext` — sem modificação, a obrigação é apenas manter os avisos; confirme antes de distribuir. Licenças de fontes (DejaVu) em `assets/fonts/LICENSE-DejaVu.txt`. A revisão usou os metadados declarados pelos pacotes; **não foi uma análise jurídica** nem verificou textos de licença individuais.
+- `npm audit`: 3 achados **somente em ferramentas de teste** (`vitest`/`tinypool`/`@vitest/mocker`, não fazem parte do app). A correção exige `vitest` 5 (mudança incompatível) e não foi aplicada nesta fase; o teste só executa código local do projeto. Nenhuma dependência de produção foi atualizada e os arquivos de lock não foram alterados.
+- `cargo audit` não estava instalado no ambiente: **vulnerabilidades em crates Rust não foram verificadas**.
+
+### Limitações conhecidas após a Fase 6
+
+- Verificado em **Linux**. Dependem de Windows real: diálogos nativos, junções/reparse points, arquivos em uso (a exclusão com arquivo aberto reporta erro e pode ser repetida), OneDrive/rede, instalador e fluxo offline com firewall.
+- **TOCTOU:** entre validar e abrir, outro processo com acesso à sua conta ainda pode trocar arquivos; a importação mitiga lendo tudo do mesmo arquivo aberto e comparando tamanho/data, e as cópias gerenciadas são relidas e conferidas por hash. Não há abertura por handle com `O_NOFOLLOW`/`FILE_FLAG_OPEN_REPARSE_POINT`.
+- Cópias gerenciadas sem registro (queda entre a publicação e o commit do banco) **não** são removidas automaticamente, para não apagar dados que possam ser recuperados; ficam em `files/` e são removidas junto com o projeto.
+- Uma pasta temporária de exportação abandonada só é limpa na próxima exportação para o **mesmo destino**.
+- Falhas de PDF/OCR já eram isoladas por documento (`catch_unwind` + `panic = "unwind"`); um estouro de pilha ou *abort* de uma biblioteca nativa/Tesseract (processo externo) pode, em tese, não ser recuperável. Não há teste de carga com 500 arquivos reais e nenhum número de desempenho é prometido.
+- `cargo audit`, revisão jurídica de licenças e teste de carga continuam pendentes.
+
+## Fase 7 — busca semântica local e evidências visuais
+
+Documentação completa, com o estado real de verificação, o modelo (origem, licença, requisitos), a migração, o formato do PDF e as limitações: **[`docs/FASE7.md`](docs/FASE7.md)**.
+
+Resumo: três modalidades de pesquisa (exata, por significado, híbrida) sobre embeddings locais (`multilingual-e5-small` via `candle`, instalado por `INICIAR.bat`/`RECOMPILAR.bat`; o aplicativo em si nunca baixa nada e a busca exata funciona sem ele); coordenadas por palavra do OCR guardadas para destacar só o trecho encontrado; relatório PDF com destaque amarelo, índice das ocorrências e blocos "imagem à esquerda, descrição à direita". Projetos antigos precisam reprocessar os documentos de imagem para ter evidência visual: ao abrir o projeto, eles aparecem como "desatualizados" (versão do extrator 3) e o botão **Processar pendentes** os refaz.
+
+### Pendências antes de chamar a Fase 7 de concluída
+1. Compilar (`cargo build`, `npm run check`, `cargo test`) e corrigir o que aparecer — nada disso foi executado.
+2. Instalar o modelo, gerar o índice em um projeto real, medir RAM/tempo e calibrar o limiar de similaridade.
+3. Gerar um PDF real com uma imagem e conferir a legibilidade em um leitor.
+4. Instalador do Windows com o modelo embutido (fora desta entrega).

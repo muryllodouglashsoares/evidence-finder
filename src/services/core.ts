@@ -3,7 +3,11 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  IndexProgress,
+  SemanticStatus,
   CoreErrorPayload,
+  DeleteProjectResult,
+  DeletionPreview,
   DirectorySelection,
   DocumentInfo,
   DocumentList,
@@ -79,6 +83,15 @@ export const core = {
   /** Remove apenas da lista de recentes; não apaga nada do disco. */
   forgetRecentProject: (id: string) => call<boolean>("forget_recent_project", { id }),
 
+  /** Fase 6: o que a exclusão do projeto removeria. Não altera nada. */
+  previewDeleteProject: (id: string) => call<DeletionPreview>("preview_delete_project", { id }),
+
+  /**
+   * Fase 6: exclui cópias gerenciadas, banco e pasta (se vazia). Arquivos originais
+   * apenas referenciados e itens estranhos na pasta nunca são apagados.
+   */
+  deleteProject: (id: string) => call<DeleteProjectResult>("delete_project", { id }),
+
   // --- Fase 2: documentos do projeto aberto (a interface nunca envia caminhos) ---
 
   /** Encerra o projeto aberto no núcleo e descarta seleções pendentes. */
@@ -145,4 +158,18 @@ export const core = {
   /** Gera o pacote (PDF, fontes verificadas e manifesto) em uma nova pasta do destino autorizado. */
   exportEvidence: (projectId: string, selection: ExportSelection, destinationToken: string) =>
     call<ExportResult>("export_evidence", { projectId, selection, destinationToken }),
+
+  // --- Fase 7: busca semântica local. Nada é baixado nem enviado; o modelo é instalado pelo usuário. ---
+
+  /** Estado do modelo, do índice semântico do projeto e da indexação em andamento. */
+  getSemanticStatus: (projectId: string) => call<SemanticStatus>("get_semantic_status", { projectId }),
+
+  /** Gera os vetores que faltam, em segundo plano. Falha sem iniciar nada se o modelo não está instalado. */
+  startSemanticIndexing: (projectId: string) =>
+    call<IndexProgress>("start_semantic_indexing", { projectId }),
+
+  cancelSemanticIndexing: (projectId: string) => call<void>("cancel_semantic_indexing", { projectId }),
+
+  /** Apaga só o índice semântico (textos e busca por palavras não mudam). */
+  clearSemanticIndex: (projectId: string) => call<void>("clear_semantic_index", { projectId }),
 };

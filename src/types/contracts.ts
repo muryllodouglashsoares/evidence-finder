@@ -25,6 +25,7 @@ export type ErrorCode =
   | "BUSY"
   | "INVALID_QUERY"
   | "EXPORT_FAILED"
+  | "SEMANTIC_UNAVAILABLE"
   | "CORE_UNAVAILABLE";
 
 export interface CoreErrorPayload {
@@ -159,6 +160,23 @@ export interface ImportResult {
   failed: ImportFailure[];
 }
 
+/** Fase 6: o que a exclusão de um projeto removeria (não altera nada). */
+export interface DeletionPreview {
+  projectName: string;
+  documentCount: number;
+  /** Cópias gerenciadas pelo projeto: serão excluídas do disco. */
+  managedFiles: number;
+  managedBytes: number;
+  /** Documentos apenas referenciados: os arquivos originais não são tocados. */
+  referencedDocuments: number;
+}
+
+export interface DeleteProjectResult {
+  managedFilesDeleted: number;
+  /** `false` quando a pasta contém itens que não pertencem ao projeto (preservados). */
+  folderRemoved: boolean;
+}
+
 export interface RemoveResult {
   managedCopyDeleted: boolean;
   warning: string | null;
@@ -179,12 +197,19 @@ export interface SearchFilters {
   importedTo: string | null;
 }
 
+/** Modalidade de pesquisa (Fase 7). Omitida = "lexical" (comportamento anterior). */
+export type SearchMode = "lexical" | "semantic" | "hybrid";
+
+/** Como o resultado foi encontrado. */
+export type MatchKind = "lexical" | "semantic" | "both";
+
 export interface SearchRequest {
   query: string;
   filters: SearchFilters;
   sort: SearchSort;
   limit?: number;
   offset?: number;
+  mode?: SearchMode;
 }
 
 export interface TextSpan {
@@ -234,6 +259,16 @@ export interface SearchHit extends SegmentLocation {
   previewCutEnd: boolean;
   /** Tamanho do trecho completo, em caracteres. */
   textLength: number;
+  matchKind: MatchKind;
+  /** Cosseno consulta×trecho: indicador técnico, NÃO é probabilidade nem confirmação do fato. */
+  semanticScore: number | null;
+}
+
+export interface SemanticCoverage {
+  /** Trechos elegíveis (extração concluída e íntegra). */
+  eligible: number;
+  /** Elegíveis já indexados com a versão atual do modelo. */
+  indexed: number;
 }
 
 export interface SearchResponse {
@@ -243,6 +278,10 @@ export interface SearchResponse {
   limit: number;
   hasMore: boolean;
   results: SearchHit[];
+  /** Modalidade realmente executada (pode ser "lexical" se a semântica estava indisponível). */
+  mode: SearchMode;
+  notice: string | null;
+  semantic: SemanticCoverage | null;
 }
 
 export interface ContextSegment extends SegmentLocation {
@@ -265,6 +304,7 @@ export interface ExportSelection {
   segmentIds: number[];
   query: string;
   filters: SearchFilters;
+  mode?: SearchMode;
 }
 
 export interface FilterDocument {
@@ -289,6 +329,17 @@ export interface ReviewOccurrence extends SegmentLocation {
   /** Trecho completo. */
   text: string;
   textLength: number;
+  matchKind: MatchKind;
+  semanticScore: number | null;
+  visual: VisualPreview;
+}
+
+/** Se a ocorrência terá evidência visual (imagem com destaque amarelo) no relatório. */
+export interface VisualPreview {
+  available: boolean;
+  /** "words" = palavras correspondentes; "paragraph" = parágrafo reconhecido (semântico). */
+  highlight: "words" | "paragraph" | null;
+  reason: string | null;
 }
 
 export interface ReviewFile {
@@ -306,6 +357,7 @@ export interface ReviewFile {
 
 export interface ExportReview {
   query: string;
+  mode: SearchMode;
   filters: FilterSummary;
   occurrences: ReviewOccurrence[];
   files: ReviewFile[];
@@ -332,4 +384,49 @@ export interface ExportResult {
   exportedFiles: number;
   files: ExportFileResult[];
   warnings: string[];
+  /** Evidências visuais (imagem + descrição) incluídas no relatório. */
+  visualEvidenceCount: number;
+}
+
+// --- Busca semântica local (Fase 7) ---
+
+export type ModelState = "ready" | "missing" | "invalid" | "unsupported_build";
+
+export interface ModelStatus {
+  state: ModelState;
+  modelId: string;
+  displayName: string;
+  license: string;
+  sourceUrl: string;
+  /** Pasta onde os arquivos do modelo devem ficar (apenas para exibição). */
+  directory: string;
+  requiredFiles: string[];
+  missingFiles: string[];
+  message: string | null;
+}
+
+export interface IndexReport {
+  total: number;
+  generated: number;
+  reused: number;
+  failed: number;
+  skipped: number;
+  cancelled: boolean;
+}
+
+export interface IndexProgress {
+  running: boolean;
+  projectId: string | null;
+  total: number;
+  done: number;
+  failed: number;
+  last: IndexReport | null;
+  error: string | null;
+}
+
+export interface SemanticStatus {
+  model: ModelStatus;
+  /** null quando o modelo não está instalado (não há versão para comparar). */
+  coverage: SemanticCoverage | null;
+  indexing: IndexProgress;
 }

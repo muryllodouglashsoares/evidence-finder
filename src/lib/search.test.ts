@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { MATCH_KIND_LABEL, MODE_HELP, MODE_LABEL, scoreText, validateQuery as validate, buildSearchRequest as buildRequest, EMPTY_FORM as FORM0 } from "./search";
 import type { DocumentInfo, SearchHit, SearchResponse, SegmentLocation } from "../types/contracts";
 import {
   buildSearchRequest,
@@ -48,6 +49,8 @@ function hit(id: number, over: Partial<SearchHit> = {}): SearchHit {
     previewCutStart: false,
     previewCutEnd: false,
     textLength: 5,
+    matchKind: "lexical",
+    semanticScore: null,
     ...over,
   };
 }
@@ -59,6 +62,9 @@ const response = (ids: number[], over: Partial<SearchResponse> = {}): SearchResp
   limit: 50,
   hasMore: false,
   results: ids.map((i) => hit(i)),
+  mode: "lexical",
+  notice: null,
+  semantic: null,
   ...over,
 });
 
@@ -218,5 +224,71 @@ describe("searchReducer", () => {
     s = searchReducer(s, { type: "reset", seq: 2 });
     s = searchReducer(s, { type: "success", seq: 1, append: false, response: response([1]) });
     expect(s.status).toBe("idle");
+  });
+});
+
+// --- Fase 7: modalidades ---------------------------------------------------------
+
+
+describe("modalidade de pesquisa", () => {
+  it("o pedido lexical continua idêntico ao das fases anteriores (sem o campo mode)", () => {
+    const req = buildRequest({ ...FORM0, query: " pagamento " }, 0);
+    expect(req).not.toHaveProperty("mode");
+    expect(req.query).toBe("pagamento");
+  });
+
+  it("envia a modalidade quando não é lexical e preserva filtros, ordenação e paginação", () => {
+    const form = { ...FORM0, query: "recebimento", mode: "hybrid" as const, sort: "document" as const, formats: ["png" as const] };
+    const req = buildRequest(form, 50);
+    expect(req.mode).toBe("hybrid");
+    expect(req.sort).toBe("document");
+    expect(req.offset).toBe(50);
+    expect(req.filters.formats).toEqual(["png"]);
+  });
+
+  it("aspas sem fechamento só são erro quando há busca exata", () => {
+    expect(validate('"promessa', "lexical")).toContain("aspas");
+    expect(validate('"promessa', "hybrid")).toContain("aspas");
+    expect(validate('"promessa', "semantic")).toBeNull();
+    expect(validate("   ", "semantic")).not.toBeNull();
+  });
+
+  it("a similaridade é apresentada como indicador técnico, nunca como probabilidade", () => {
+    expect(scoreText({ semanticScore: 0.8712 })).toBe("similaridade 0,87");
+    expect(scoreText({ semanticScore: null })).toBeNull();
+    expect(scoreText({ semanticScore: 0.9 })).not.toContain("%");
+  });
+
+  it("rotula o tipo de correspondência e explica cada modalidade", () => {
+    expect(MATCH_KIND_LABEL.semantic).toBe("Semântica");
+    expect(MATCH_KIND_LABEL.both).toContain("Literal");
+    expect(Object.keys(MODE_LABEL)).toEqual(["lexical", "semantic", "hybrid"]);
+    expect(MODE_HELP.hybrid).toContain("nunca são descartados");
+  });
+
+  it("guarda a modalidade executada, o aviso e a cobertura da resposta", () => {
+    let s = searchReducer(IDLE_SEARCH, { type: "start", seq: 1, append: false });
+    s = searchReducer(s, {
+      type: "success",
+      seq: 1,
+      append: false,
+      response: response([1], {
+        mode: "lexical",
+        notice: "Busca semântica indisponível. Exibindo apenas os resultados da busca por palavras.",
+        semantic: { eligible: 4, indexed: 0 },
+      }),
+    });
+    expect(s.mode).toBe("lexical");
+    expect(s.notice).toContain("indisponível");
+    expect(s.semantic).toEqual({ eligible: 4, indexed: 0 });
+    // Nova pesquisa limpa o aviso anterior.
+    s = searchReducer(s, { type: "start", seq: 2, append: false });
+    expect(s.notice).toBeNull();
+  });
+
+  it("resultados só semânticos não trazem trecho marcado como literal", () => {
+    const h = hit(1, { matchKind: "semantic", semanticScore: 0.86, preview: [{ text: "Recebi o comprovante", matched: false }] });
+    expect(h.preview.some((p) => p.matched)).toBe(false);
+    expect(scoreText(h)).toBe("similaridade 0,86");
   });
 });

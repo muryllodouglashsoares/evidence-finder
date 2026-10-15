@@ -51,6 +51,47 @@ pub enum SearchSort {
     Document,
 }
 
+/// Modalidade de pesquisa (Fase 7). `Lexical` é o comportamento das fases anteriores.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SearchMode {
+    /// Palavras e frases exatas (FTS5).
+    #[default]
+    Lexical,
+    /// Similaridade de significado (embeddings locais).
+    Semantic,
+    /// Combina as duas listas por fusão de posições (RRF).
+    Hybrid,
+}
+
+/// Como o resultado foi encontrado.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MatchKind {
+    /// Contém os termos da consulta (há destaque literal).
+    Lexical,
+    /// Relacionado pelo significado, sem os termos literais (sem destaque literal).
+    Semantic,
+    /// Os dois.
+    Both,
+}
+
+impl MatchKind {
+    pub fn has_literal(self) -> bool {
+        matches!(self, Self::Lexical | Self::Both)
+    }
+}
+
+/// Situação do índice semântico informada junto da resposta.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticCoverage {
+    /// Trechos elegíveis (extração concluída e íntegra).
+    pub eligible: u32,
+    /// Elegíveis já indexados com a versão atual do modelo.
+    pub indexed: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct SearchFilters {
@@ -74,6 +115,9 @@ pub struct SearchRequest {
     pub sort: SearchSort,
     pub limit: Option<u32>,
     pub offset: Option<u32>,
+    /// Padrão: lexical (compatível com a interface das fases anteriores).
+    #[serde(default)]
+    pub mode: SearchMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -159,6 +203,10 @@ pub struct SearchHit {
     pub preview_cut_end: bool,
     /// Tamanho do trecho completo, em caracteres.
     pub text_length: u32,
+    pub match_kind: MatchKind,
+    /// Cosseno entre consulta e trecho (indicador técnico de similaridade, NÃO é
+    /// probabilidade nem confirmação do fato). Só em resultados semânticos.
+    pub semantic_score: Option<f32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -170,6 +218,11 @@ pub struct SearchResponse {
     pub limit: u32,
     pub has_more: bool,
     pub results: Vec<SearchHit>,
+    /// Modalidade realmente executada (pode ser `lexical` se a semântica estava indisponível).
+    pub mode: SearchMode,
+    /// Aviso para a interface (ex.: busca semântica indisponível, índice incompleto).
+    pub notice: Option<String>,
+    pub semantic: Option<SemanticCoverage>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -435,9 +488,46 @@ fn highlight_segment(
 // Busca
 // ---------------------------------------------------------------------------
 
-struct Where {
-    sql: String,
-    params: Vec<Value>,
+pub(crate) struct Where {
+    pub(crate) sql: String,
+    pub(crate) params: Vec<Value>,
+}
+
+/// Só os filtros (sem MATCH), com `?1` = projeto. Usa os aliases `s` (trecho) e `d`
+/// (documento). Usada pela busca semântica, que não passa pelo FTS5.
+pub(crate) fn filter_where(project_id: &str, filters: &SearchFilters) -> Result<Where, AppError> {
+    if filters.document_ids.len() > crate::documents::MAX_DOCUMENTS as usize {
+        return Err(invalid_query("Documentos demais selecionados nos filtros."));
+    }
+    let mut params: Vec<Value> = vec![Value::Text(project_id.to_string())];
+    let mut sql = String::from("s.project_id = ?1 AND d.project_id = ?1");
+    let mut add_list = |column: &str, values: Vec<String>| {
+        if values.is_empty() {
+            return;
+        }
+        let marks: Vec<String> = values
+            .into_iter()
+            .map(|v| {
+                params.push(Value::Text(v));
+                format!("?{}", params.len())
+            })
+            .collect();
+        sql.push_str(&format!(" AND {column} IN ({})", marks.join(",")));
+    };
+    add_list("s.document_id", filters.document_ids.clone());
+    add_list(
+        "d.format",
+        filters.formats.iter().map(|f| f.as_str().to_string()).collect(),
+    );
+    if let Some(from) = filters.imported_from.as_deref() {
+        params.push(Value::Text(normalize_instant("importado a partir de", from)?));
+        sql.push_str(&format!(" AND d.imported_at >= ?{}", params.len()));
+    }
+    if let Some(to) = filters.imported_to.as_deref() {
+        params.push(Value::Text(normalize_instant("importado até", to)?));
+        sql.push_str(&format!(" AND d.imported_at < ?{}", params.len()));
+    }
+    Ok(Where { sql, params })
 }
 
 fn build_where(project_id: &str, match_expr: &str, filters: &SearchFilters) -> Result<Where, AppError> {
@@ -563,6 +653,8 @@ pub fn search(project: &ProjectHandle, request: &SearchRequest) -> Result<Search
             preview_cut_start: cut_start,
             preview_cut_end: cut_end,
             text_length: segment.text.chars().count() as u32,
+            match_kind: MatchKind::Lexical,
+            semantic_score: None,
         });
     }
     let total = u32::try_from(total).unwrap_or(u32::MAX);
@@ -573,7 +665,126 @@ pub fn search(project: &ProjectHandle, request: &SearchRequest) -> Result<Search
         limit,
         has_more: (offset as u64 + results.len() as u64) < total as u64,
         results,
+        mode: SearchMode::Lexical,
+        notice: None,
+        semantic: None,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Apoio às modalidades semântica e híbrida (Fase 7)
+// ---------------------------------------------------------------------------
+
+/// Ids dos trechos que casam com a consulta, em ordem de relevância (BM25), até `cap`.
+pub(crate) fn lexical_ranked(
+    conn: &Connection,
+    project_id: &str,
+    match_expr: &str,
+    filters: &SearchFilters,
+    cap: u32,
+) -> Result<Vec<i64>, AppError> {
+    let w = build_where(project_id, match_expr, filters)?;
+    let sql = format!(
+        "SELECT s.id {FROM_JOIN} WHERE {} \
+         ORDER BY bm25(text_segment_fts), d.name COLLATE NOCASE, s.document_id, s.seq LIMIT {cap}",
+        w.sql
+    );
+    let mut stmt = conn.prepare(&sql).map_err(map_sql)?;
+    let mut rows = stmt.query(params_from_iter(w.params.iter())).map_err(map_sql)?;
+    let mut out = Vec::new();
+    while let Some(r) = rows.next().map_err(map_sql)? {
+        out.push(r.get::<_, i64>(0)?);
+    }
+    Ok(out)
+}
+
+/// Nome e posição de cada trecho (para a ordenação "documento e posição").
+pub(crate) fn document_order_keys(
+    conn: &Connection,
+    project_id: &str,
+    ids: &[i64],
+) -> Result<HashMap<i64, (String, String, u32)>, AppError> {
+    let mut out = HashMap::new();
+    let mut stmt = conn.prepare(
+        "SELECT d.name, s.document_id, s.seq FROM text_segment s
+         JOIN document d ON d.id = s.document_id
+         WHERE s.id = ?1 AND s.project_id = ?2 AND d.project_id = ?2",
+    )?;
+    for id in ids {
+        let mut rows = stmt.query(params![id, project_id])?;
+        if let Some(r) = rows.next()? {
+            let name: String = r.get(0)?;
+            let doc: String = r.get(1)?;
+            let seq: i64 = r.get(2)?;
+            out.insert(*id, (name.to_lowercase(), doc, seq.max(0) as u32));
+        }
+    }
+    Ok(out)
+}
+
+/// Monta o resultado de um trecho encontrado por qualquer modalidade. O destaque
+/// literal só é aplicado quando há correspondência lexical.
+pub(crate) fn build_hit(
+    project: &ProjectHandle,
+    conn: &Connection,
+    docs: &mut HashMap<String, DocumentRef>,
+    segment_id: i64,
+    kind: MatchKind,
+    score: Option<f32>,
+    match_expr: Option<&str>,
+    position: u32,
+) -> Result<Option<SearchHit>, AppError> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT s.document_id, {SEGMENT_COLUMNS} FROM text_segment s
+         WHERE s.id = ?1 AND s.project_id = ?2"
+    ))?;
+    let mut rows = stmt.query(params![segment_id, project.id])?;
+    let Some(r) = rows.next()? else {
+        return Ok(None);
+    };
+    let document_id: String = r.get(0)?;
+    let segment = segment_from_row(r, 1)?;
+    if !docs.contains_key(&document_id) {
+        docs.insert(document_id.clone(), document_ref(project, conn, &document_id)?);
+    }
+    let spans = match (kind.has_literal(), match_expr) {
+        (true, Some(m)) => highlight_segment(conn, m, segment_id, &segment.text),
+        _ => plain(&segment.text),
+    };
+    let (preview, cut_start, cut_end) = make_preview(spans);
+    Ok(Some(SearchHit {
+        segment_id,
+        position,
+        document: docs[&document_id].clone(),
+        location: SegmentLocation::from(&segment),
+        preview,
+        preview_cut_start: cut_start,
+        preview_cut_end: cut_end,
+        text_length: segment.text.chars().count() as u32,
+        match_kind: kind,
+        semantic_score: score,
+    }))
+}
+
+/// Trechos de `text` correspondentes aos termos da consulta, como intervalos de
+/// caracteres `[início, fim)` — a base do destaque literal no relatório.
+pub(crate) fn literal_ranges(
+    conn: &Connection,
+    match_expr: &str,
+    segment_id: i64,
+    text: &str,
+) -> Vec<(usize, usize)> {
+    let spans = highlight_segment(conn, match_expr, segment_id, text);
+    let mut out = Vec::new();
+    let mut pos = 0usize;
+    for s in spans {
+        let len = s.text.chars().count();
+        if s.matched && len > 0 {
+            out.push((pos, pos + len));
+        }
+        pos += len;
+    }
+    out
 }
 
 /// Entre `segment_ids`, os trechos que pertencem ao projeto E correspondem à

@@ -3,7 +3,7 @@
 
 use crate::db::{self, PROJECT_DB_FILE};
 use crate::error::{AppError, ErrorCode};
-use crate::models::ProjectRecord;
+use crate::models::{DeleteProjectResult, DeletionPreview, ProjectRecord};
 use crate::paths;
 use crate::validation::validate_project_name;
 use std::fs;
@@ -95,6 +95,90 @@ pub fn open_project(dir: &Path) -> Result<OpenedProject, AppError> {
 
     let record = db::open_project_db(&db_path)?;
     Ok(OpenedProject { record, dir })
+}
+
+/// Abre a pasta e confirma que é o projeto `expected_id` (nunca confia só no caminho).
+fn open_expected(dir: &Path, expected_id: &str) -> Result<OpenedProject, AppError> {
+    let opened = open_project(dir)?;
+    if opened.record.id != expected_id {
+        return Err(AppError::new(
+            ErrorCode::NotAProject,
+            "A pasta registrada agora contém outro projeto. Nada foi excluído.",
+        ));
+    }
+    Ok(opened)
+}
+
+/// O que `delete_project` removeria. Não altera nada.
+pub fn preview_delete_project(dir: &Path, expected_id: &str) -> Result<DeletionPreview, AppError> {
+    let opened = open_expected(dir, expected_id)?;
+    let conn = crate::docstore::connect(&opened.dir)?;
+    let rows = crate::docstore::list(&conn)?;
+    let owned = crate::documents::owned_managed_files(&opened.dir)?;
+    Ok(DeletionPreview {
+        project_name: opened.record.name,
+        document_count: rows.len() as u32,
+        managed_files: owned.len() as u32,
+        managed_bytes: owned.iter().map(|(_, len, _)| *len).sum(),
+        referenced_documents: rows
+            .iter()
+            .filter(|r| r.storage_mode == crate::models::StorageMode::Reference)
+            .count() as u32,
+    })
+}
+
+/// Exclui um projeto. Só remove o que o próprio app criou: as cópias gerenciadas
+/// (`files/<uuid>.<ext>`), o banco e seus arquivos auxiliares. Os arquivos
+/// originais apenas referenciados nunca são tocados e itens estranhos dentro da
+/// pasta do projeto são preservados (a pasta só é removida se ficar vazia).
+///
+/// Ordem: cópias primeiro, banco por último. Se algo falhar antes do banco, o
+/// projeto continua abrível (documentos sem cópia aparecem como indisponíveis) e
+/// a exclusão pode ser repetida; nunca se declara sucesso por uma exclusão parcial.
+pub fn delete_project(dir: &Path, expected_id: &str) -> Result<DeleteProjectResult, AppError> {
+    delete_project_with(dir, expected_id, |p| fs::remove_file(p))
+}
+
+/// Igual a `delete_project`, com a remoção de cada cópia injetável (testes de falha parcial).
+pub(crate) fn delete_project_with(
+    dir: &Path,
+    expected_id: &str,
+    remove_copy: impl Fn(&Path) -> std::io::Result<()>,
+) -> Result<DeleteProjectResult, AppError> {
+    let opened = open_expected(dir, expected_id)?;
+    let project_dir = opened.dir;
+    let owned = crate::documents::owned_managed_files(&project_dir)?;
+
+    let mut deleted = 0u32;
+    let mut failed = 0u32;
+    for (path, _, _) in &owned {
+        match remove_copy(path) {
+            Ok(()) => deleted += 1,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => failed += 1,
+        }
+    }
+    if failed > 0 {
+        return Err(AppError::new(
+            ErrorCode::Io,
+            format!(
+                "{failed} arquivo(s) do projeto não puderam ser excluídos (podem estar em uso ou sem permissão). O projeto não foi removido; feche os programas que usam esses arquivos e tente novamente."
+            ),
+        ));
+    }
+
+    let db_path = project_dir.join(PROJECT_DB_FILE);
+    fs::remove_file(&db_path)?;
+    for suffix in ["-journal", "-wal", "-shm"] {
+        let _ = fs::remove_file(project_dir.join(format!("{PROJECT_DB_FILE}{suffix}")));
+    }
+    // `remove_dir` não apaga pastas com conteúdo: itens do usuário ficam intactos.
+    let _ = fs::remove_dir(project_dir.join(crate::documents::MANAGED_DIR));
+    let folder_removed = fs::remove_dir(&project_dir).is_ok();
+    Ok(DeleteProjectResult {
+        managed_files_deleted: deleted,
+        folder_removed,
+    })
 }
 
 fn not_a_project() -> AppError {

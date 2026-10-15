@@ -279,3 +279,23 @@ ul { list-style: none; }
 .export__text { white-space: pre-wrap; overflow-wrap: anywhere; margin: 2px 0 0; }
 .export__dest { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .export__error, .export__done { display: flex; flex-direction: column; gap: 6px; }
+
+/* --- Fase 7: busca semântica local e evidências visuais --- */
+.semantic { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; background: var(--surface); }
+.semantic__summary { display: flex; gap: 10px; align-items: center; cursor: pointer; font-weight: 600; }
+.semantic__body { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.semantic__install { border-left: 3px solid var(--warn); padding-left: 10px; display: flex; flex-direction: column; gap: 6px; }
+.semantic__install ol { margin: 0; padding-left: 20px; }
+.semantic__actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.modes { border: 0; padding: 0; margin: 0 0 8px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.modes legend { font-size: 13px; color: var(--ink-soft); padding: 0 6px 0 0; float: left; }
+.modes__opt { display: inline-flex; gap: 6px; align-items: center; border: 1px solid var(--line); border-radius: 999px; padding: 3px 12px; font-size: 14px; cursor: pointer; }
+.modes__opt:has(input:checked) { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.modes__opt:has(input:disabled) { opacity: 0.55; cursor: not-allowed; }
+.modes__opt:has(input:focus-visible) { outline: 2px solid var(--ink); outline-offset: 2px; }
+.badge--kind-lexical { background: var(--surface-2); }
+.badge--kind-semantic { background: var(--warn-bg); color: var(--warn); border-color: transparent; }
+.badge--kind-both { background: var(--ok-bg); color: var(--ok); border-color: transparent; }
+.export__visual { font-size: 13px; margin: 4px 0 0; }
+.export__visual--yes { color: var(--ok); }
+.export__visual--no { color: var(--ink-soft); }

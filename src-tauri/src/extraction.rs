@@ -36,7 +36,14 @@ use std::sync::{Arc, Mutex};
 /// Versão do extrator. Aumente quando mudar a decodificação, a segmentação,
 /// os limites ou os parâmetros do OCR: os resultados antigos passam a constar
 /// como "desatualizados" e podem ser refeitos.
-pub const EXTRACTOR_VERSION: i64 = 1;
+/// 2 (Fase 7): o OCR passou a guardar as coordenadas de cada palavra. Documentos
+/// processados com a versão 1 aparecem como "desatualizados" e podem ser
+/// reprocessados para gerar evidências visuais; nada é apagado automaticamente.
+/// 3: documentos de imagem processados antes de o OCR guardar as coordenadas das
+/// palavras continuavam como "atualizados" e ficavam sem evidência visual, sem
+/// nenhum botão para refazê-los. Agora todos aparecem como "desatualizados" e
+/// "Processar pendentes" os refaz (substitui os trechos, sem duplicar).
+pub const EXTRACTOR_VERSION: i64 = 3;
 
 pub const MAX_TXT_BYTES: u64 = 50 * 1024 * 1024;
 pub const MAX_IMAGE_BYTES: u64 = 50 * 1024 * 1024;
@@ -281,6 +288,8 @@ fn ocr_segments(res: ocr::OcrResult, page: Option<u32>, keep_bbox: bool) -> Vec<
             char_end: None,
             bbox: keep_bbox.then_some(s.bbox),
             confidence: Some(s.confidence),
+            // As palavras só valem quando a imagem é única (as coordenadas se referem a ela).
+            words: if keep_bbox { s.words } else { Vec::new() },
         })
         .collect()
 }

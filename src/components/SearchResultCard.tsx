@@ -1,6 +1,14 @@
 import { AVAILABILITY_LABEL, AVAILABILITY_TONE, FORMAT_LABEL } from "../lib/documents";
 import { METHOD_LABEL } from "../lib/extraction";
-import { canOpenSource, confidenceText, describeLocation, isLowConfidence } from "../lib/search";
+import {
+  canOpenSource,
+  confidenceText,
+  describeLocation,
+  isLowConfidence,
+  MATCH_KIND_LABEL,
+  SCORE_EXPLANATION,
+  scoreText,
+} from "../lib/search";
 import type { SearchHit } from "../types/contracts";
 import { HighlightedText } from "./HighlightedText";
 
@@ -45,6 +53,13 @@ export function SearchResultCard({
         </p>
         <p className="hit__meta">
           <span className="badge">{FORMAT_LABEL[doc.format]}</span>
+          <span
+            className={`badge badge--kind-${hit.matchKind}`}
+            title={hit.matchKind === "lexical" ? "Contém os termos da consulta." : SCORE_EXPLANATION}
+          >
+            {MATCH_KIND_LABEL[hit.matchKind]}
+            {scoreText(hit) ? ` · ${scoreText(hit)}` : ""}
+          </span>
           {describeLocation(hit).map((part) => (
             <span key={part}>{part}</span>
           ))}
@@ -65,6 +80,7 @@ export function SearchResultCard({
 
       <blockquote className="hit__text">
         {hit.previewCutStart ? <span aria-hidden="true">… </span> : null}
+        {/* Resultado só semântico não tem trecho destacado: o amarelo é reservado a termos literais. */}
         <HighlightedText spans={hit.preview} />
         {hit.previewCutEnd ? <span aria-hidden="true"> …</span> : null}
       </blockquote>

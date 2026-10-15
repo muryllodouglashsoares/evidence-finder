@@ -83,6 +83,7 @@ impl Env {
                 sort: SearchSort::Document,
                 limit: Some(200),
                 offset: None,
+                mode: Default::default(),
             },
         )
         .unwrap();
@@ -103,6 +104,7 @@ fn selection(ids: Vec<i64>, query: &str) -> ExportSelection {
         segment_ids: ids,
         query: query.into(),
         filters: SearchFilters::default(),
+        mode: Default::default(),
     }
 }
 
@@ -534,7 +536,7 @@ fn segment_ids_of_a_removed_document_are_reported_as_not_found() {
 fn unauthorized_destination_tokens_are_rejected() {
     let dirs = AuthorizedDirs::default();
     for token in ["", "token-inexistente", "/tmp", "..", "C:\\Windows"] {
-        assert_eq!(dirs.resolve(token).unwrap_err().code, ErrorCode::DirectoryNotAuthorized, "{token:?}");
+        assert_eq!(dirs.resolve(token, crate::models::PickPurpose::ExportDestination).unwrap_err().code, ErrorCode::DirectoryNotAuthorized, "{token:?}");
     }
 }
 
@@ -571,11 +573,11 @@ fn existing_destination_folder_is_never_overwritten() {
     fs::write(e.dest.join("relatorio.pdf"), b"outro relatorio").unwrap();
 
     let first = e
-        .export_with(ids.clone(), "pagamento", ExportOptions { folder_base: Some(base.clone()), fail_at: None })
+        .export_with(ids.clone(), "pagamento", ExportOptions { folder_base: Some(base.clone()), fail_at: None, ..Default::default() })
         .unwrap();
     assert_eq!(first.folder_name, format!("{base}-2"));
     let second = e
-        .export_with(ids, "pagamento", ExportOptions { folder_base: Some(base.clone()), fail_at: None })
+        .export_with(ids, "pagamento", ExportOptions { folder_base: Some(base.clone()), fail_at: None, ..Default::default() })
         .unwrap();
     assert_eq!(second.folder_name, format!("{base}-3"));
 
@@ -608,7 +610,7 @@ fn failures_at_every_stage_leave_no_artifacts_and_keep_existing_files() {
         FailPoint::BeforePublish,
     ] {
         let err = e
-            .export_with(ids.clone(), "pagamento", ExportOptions { folder_base: None, fail_at: Some(point) })
+            .export_with(ids.clone(), "pagamento", ExportOptions { folder_base: None, fail_at: Some(point), ..Default::default() })
             .unwrap_err();
         assert_eq!(err.code, ErrorCode::ExportFailed, "{point:?}");
         assert_eq!(
@@ -635,7 +637,7 @@ fn a_package_is_never_visible_before_it_is_complete() {
     e.file("a.txt", "pagamento A", StorageMode::Copy);
     let ids = e.ids("pagamento");
     // Falha na publicação: a pasta temporária existia, mas nenhum nome final apareceu.
-    let _ = e.export_with(ids, "pagamento", ExportOptions { folder_base: None, fail_at: Some(FailPoint::BeforePublish) });
+    let _ = e.export_with(ids, "pagamento", ExportOptions { folder_base: None, fail_at: Some(FailPoint::BeforePublish), ..Default::default() });
     assert!(names(&e.dest).iter().all(|n| !n.starts_with(FOLDER_PREFIX)));
 }
 
@@ -725,4 +727,335 @@ fn concurrent_exports_are_rejected_by_the_state_lock() {
     let state = crate::state::AppState::new(tmp.path());
     let _running = state.export_lock.lock().unwrap();
     assert!(state.export_lock.try_lock().is_err());
+}
+
+// ===========================================================================
+// Fase 7: evidências visuais e modalidades semântica/híbrida
+// ===========================================================================
+
+use crate::embeddings::test_support::ConceptEmbedder;
+use crate::extraction::EXTRACTOR_VERSION;
+use crate::extraction_store::{BBox, Completed, Segment, SegmentMethod, WordBox};
+use crate::models::ExtractionStatus;
+use crate::pdf_report::pdf_report_tests::{image_ops, text_ops, yellow_rects};
+
+/// PNG real (branco, com uma barra escura) para servir de captura de tela.
+fn png_file(w: u32, h: u32) -> Vec<u8> {
+    let mut data = vec![255u8; (w * h * 3) as usize];
+    for y in (h / 3)..(h / 3 + 4) {
+        for x in 10..(w - 10) {
+            let i = ((y * w + x) * 3) as usize;
+            data[i..i + 3].copy_from_slice(&[30, 30, 30]);
+        }
+    }
+    let mut out = Vec::new();
+    {
+        let mut enc = png::Encoder::new(&mut out, w, h);
+        enc.set_color(png::ColorType::Rgb);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.write_header().unwrap().write_image_data(&data).unwrap();
+    }
+    out
+}
+
+fn word(seq: u32, line: u32, s: u32, e: u32, x: i64, y: i64, w: i64, h: i64) -> WordBox {
+    WordBox { seq, line_no: line, char_start: s, char_end: e, x, y, w, h, confidence: Some(91.0) }
+}
+
+/// "Pagamento realizado hoje": palavras nas posições 0..9, 10..19 e 20..24.
+fn pagamento_words() -> Vec<WordBox> {
+    vec![word(0, 1, 0, 9, 20, 40, 90, 16), word(1, 1, 10, 19, 118, 40, 90, 16), word(2, 2, 20, 24, 20, 70, 40, 16)]
+}
+
+impl Env {
+    /// Importa um PNG e grava um resultado de OCR com coordenadas, pelo mesmo
+    /// caminho de gravação da extração real (o Tesseract não é necessário).
+    fn ocr_image(&self, name: &str, text: &str, words: Vec<WordBox>, bbox: Option<BBox>, confidence: f64) -> (String, i64, PathBuf) {
+        let path = self.src.join(name);
+        fs::write(&path, png_file(320, 200)).unwrap();
+        let path = dunce::canonicalize(path).unwrap();
+        let imported = import_files(&self.project, &[path.clone()], StorageMode::Reference).unwrap();
+        let id = imported.imported[0].id.clone();
+        let mut conn = docstore::connect(&self.project.dir).unwrap();
+        let row = docstore::get(&conn, &id).unwrap().unwrap();
+        let segment = Segment {
+            seq: 0,
+            text: text.to_string(),
+            method: SegmentMethod::Ocr,
+            page_number: None,
+            line_start: None,
+            line_end: None,
+            char_start: None,
+            char_end: None,
+            bbox,
+            confidence: Some(confidence),
+            words,
+        };
+        let tx = conn.transaction().unwrap();
+        extraction_store::replace_with_result(
+            &tx,
+            &self.project.id,
+            &id,
+            &Completed {
+                status: ExtractionStatus::Completed,
+                method: Some(ExtractionMethod::Ocr),
+                content_sha256: &row.sha256,
+                extractor_version: EXTRACTOR_VERSION,
+                engine: Some("tesseract (simulado no teste)"),
+                page_count: None,
+                message: None,
+            },
+            &[segment],
+            "2026-10-15T12:00:00.000Z",
+        )
+        .unwrap();
+        tx.commit().unwrap();
+        let segment_id: i64 = conn
+            .query_row("SELECT id FROM text_segment WHERE document_id = ?1", [&id], |r| r.get(0))
+            .unwrap();
+        (id, segment_id, path)
+    }
+
+    fn selection_mode(&self, ids: Vec<i64>, query: &str, mode: SearchMode) -> ExportSelection {
+        ExportSelection { segment_ids: ids, query: query.into(), filters: SearchFilters::default(), mode }
+    }
+}
+
+/// Compara ignorando espaços e quebras de linha (o PDF quebra frases longas).
+fn has(haystack: &str, needle: &str) -> bool {
+    let squash = |t: &str| t.split_whitespace().collect::<String>();
+    squash(haystack).contains(&squash(needle))
+}
+
+fn full_bbox() -> Option<BBox> {
+    Some(BBox { x: 20, y: 40, w: 188, h: 46, image_width: 320, image_height: 200 })
+}
+
+fn report_of(result: &ExportResult) -> Vec<u8> {
+    fs::read(Path::new(&result.folder_path).join(REPORT_FILE)).unwrap()
+}
+
+#[test]
+fn literal_match_in_an_image_exports_a_visual_with_the_yellow_box_on_the_matched_word() {
+    let e = env();
+    let (_, segment_id, original) = e.ocr_image("captura.png", "Pagamento realizado hoje", pagamento_words(), full_bbox(), 91.0);
+    let before = fs::read(&original).unwrap();
+
+    let review = prepare_review(&e.project, &selection(vec![segment_id], "pagamento")).unwrap();
+    assert!(review.occurrences[0].visual.available);
+    assert_eq!(review.occurrences[0].visual.highlight, Some("words"));
+
+    let result = e.export(vec![segment_id], "pagamento").unwrap();
+    assert_eq!(result.visual_evidence_count, 1);
+    assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+
+    // O original e a cópia exportada continuam idênticos (a imagem não foi alterada).
+    assert_eq!(fs::read(&original).unwrap(), before);
+    let folder = PathBuf::from(&result.folder_path);
+    assert_eq!(fs::read(folder.join("evidencias").join("arquivo_001.png")).unwrap(), before);
+
+    let pdf = report_of(&result);
+    assert!(lopdf::Document::load_mem(&pdf).is_ok());
+    let images = image_ops(&pdf);
+    assert_eq!(images.len(), 1, "uma imagem no relatório");
+    let (_, [ix, iy, iw, ih]) = images[0];
+
+    // O destaque cobre a palavra "Pagamento" (x 20..110, y 40..56 de 320×200) e só ela.
+    let overlay: Vec<[f32; 4]> = yellow_rects(&pdf)
+        .into_iter()
+        .map(|(_, r)| r)
+        .filter(|r| r[0] >= ix - 0.01 && r[0] + r[2] <= ix + iw + 0.01 && r[1] >= iy - 0.01 && r[1] + r[3] <= iy + ih + 0.01)
+        .collect();
+    assert_eq!(overlay.len(), 1);
+    let r = overlay[0];
+    let (sx, sy) = (iw / 320.0, ih / 200.0);
+    assert!((r[0] - (ix + 18.0 * sx)).abs() < 0.2, "x do destaque (com 2 px de margem)");
+    assert!((r[2] - 94.0 * sx).abs() < 0.2, "largura = palavra + margem, não a linha toda");
+    assert!((r[3] - 20.0 * sy).abs() < 0.2);
+    assert!((r[1] - (iy + ih - 58.0 * sy)).abs() < 0.2);
+
+    // Descrição à direita, na mesma página, com o trecho literal e os metadados.
+    let ops = text_ops(&pdf);
+    let (page, dx, _, _) = ops.iter().find(|(_, _, _, t)| t == "Descrição da evidência").unwrap();
+    assert_eq!(*page, images[0].0);
+    assert!(*dx > ix + iw);
+    for needle in ["Pagamento realizado hoje", "Consulta: pagamento", "Fonte: captura.png (PNG)"] {
+        assert!(ops.iter().any(|(_, _, _, t)| t == needle), "faltou: {needle}");
+    }
+    assert!(ops.iter().any(|(_, _, _, t)| t.starts_with("Confiança do OCR: 91%")));
+
+    // Destaque amarelo também na seção textual (palavra literal).
+    assert!(yellow_rects(&pdf).len() >= 2);
+
+    // Manifesto.
+    let m = manifest_of(&result);
+    assert_eq!(m["search"]["mode"], "lexical");
+    assert_eq!(m["occurrences"][0]["matchKind"], "lexical");
+    assert_eq!(m["occurrences"][0]["visualEvidence"]["included"], true);
+    assert_eq!(m["occurrences"][0]["visualEvidence"]["highlight"], "words");
+}
+
+#[test]
+fn several_matches_on_one_image_share_one_block_with_consistent_numbering() {
+    let e = env();
+    let (_, s1, _) = e.ocr_image("a.png", "Pagamento realizado hoje", pagamento_words(), full_bbox(), 91.0);
+    // Segunda ocorrência no MESMO documento não existe (um documento = uma imagem aqui):
+    // o agrupamento é testado com dois segmentos do mesmo documento.
+    let conn = docstore::connect(&e.project.dir).unwrap();
+    let doc: String = conn.query_row("SELECT document_id FROM text_segment WHERE id = ?1", [s1], |r| r.get(0)).unwrap();
+    conn.execute(
+        "INSERT INTO text_segment (document_id, project_id, seq, text, method, bbox_x, bbox_y, bbox_w, bbox_h, image_width, image_height, confidence)
+         VALUES (?1, ?2, 1, 'Novo pagamento', 'ocr', 20, 120, 100, 20, 320, 200, 88.0)",
+        params![doc, e.project.id],
+    )
+    .unwrap();
+    let s2: i64 = conn.query_row("SELECT id FROM text_segment WHERE document_id = ?1 AND seq = 1", [&doc], |r| r.get(0)).unwrap();
+    conn.execute(
+        "INSERT INTO ocr_word (segment_id, seq, line_no, char_start, char_end, x, y, w, h, confidence)
+         VALUES (?1, 0, 1, 5, 14, 70, 120, 60, 20, 88.0)",
+        [s2],
+    )
+    .unwrap();
+
+    let ids = e.ids("pagamento");
+    assert_eq!(ids.len(), 2);
+    let result = e.export(ids, "pagamento").unwrap();
+    assert_eq!(result.visual_evidence_count, 2);
+    let pdf = report_of(&result);
+    assert_eq!(image_ops(&pdf).len(), 1, "o mesmo documento vira um único bloco visual");
+    let ops = text_ops(&pdf);
+    assert!(ops.iter().any(|(_, _, _, t)| t == "001") && ops.iter().any(|(_, _, _, t)| t == "002"), "etiquetas numeradas");
+    assert!(ops.iter().any(|(_, _, _, t)| t == "Evidência 001") && ops.iter().any(|(_, _, _, t)| t == "Evidência 002"));
+}
+
+#[test]
+fn semantic_only_result_marks_the_recognized_paragraph_and_says_so() {
+    let e = env();
+    let (_, segment_id, _) = e.ocr_image("recibo.png", "Recebi o comprovante da transferencia", Vec::new(), full_bbox(), 93.0);
+    let embedder = ConceptEmbedder::new();
+    let lock = Mutex::new(());
+    crate::semantic::index_project(&e.project, &embedder, &lock, &std::sync::atomic::AtomicBool::new(false), &mut |_, _, _| {}).unwrap();
+
+    let sel = e.selection_mode(vec![segment_id], "confirmou o recebimento do pagamento", SearchMode::Semantic);
+    let review = prepare_review_with(&e.project, &sel, Some(&embedder)).unwrap();
+    assert_eq!(review.occurrences[0].match_kind, MatchKind::Semantic);
+    assert!(review.occurrences[0].semantic_score.is_some());
+    assert_eq!(review.occurrences[0].visual.highlight, Some("paragraph"));
+
+    let result = export_evidence_with(&e.project, &sel, &e.dest, Some(Arc::new(ConceptEmbedder::new()))).unwrap();
+    let pdf = report_of(&result);
+    let text = text_ops(&pdf).into_iter().map(|o| o.3).collect::<Vec<_>>().join("\n");
+    assert!(has(&text, "Correspondência exclusivamente semântica"));
+    assert!(has(&text, "Pesquisa semântica"));
+    assert!(has(&text, "indicador técnico"));
+    assert!(has(&text, "parágrafo reconhecido"));
+    // Nenhum destaque literal no texto: só o retângulo da região sobre a imagem.
+    let [ix, iy, iw, ih] = image_ops(&pdf)[0].1;
+    let outside: Vec<_> = yellow_rects(&pdf)
+        .into_iter()
+        .filter(|(_, r)| !(r[0] >= ix - 0.01 && r[0] + r[2] <= ix + iw + 0.01 && r[1] >= iy - 0.01 && r[1] + r[3] <= iy + ih + 0.01))
+        .collect();
+    assert!(outside.is_empty(), "resultado exclusivamente semântico não tem amarelo literal no texto");
+    let m = manifest_of(&result);
+    assert_eq!(m["search"]["mode"], "semantic");
+    assert_eq!(m["occurrences"][0]["matchKind"], "semantic");
+    assert_eq!(m["occurrences"][0]["visualEvidence"]["highlight"], "paragraph");
+}
+
+#[test]
+fn legacy_ocr_without_word_coordinates_exports_without_a_visual_and_explains_why() {
+    let e = env();
+    let (_, segment_id, _) = e.ocr_image("antiga.png", "Pagamento realizado hoje", Vec::new(), full_bbox(), 90.0);
+    let result = e.export(vec![segment_id], "pagamento").unwrap();
+    assert_eq!(result.visual_evidence_count, 0);
+    let pdf = report_of(&result);
+    assert!(image_ops(&pdf).is_empty(), "nada de imagem inventada");
+    let text = text_ops(&pdf).into_iter().map(|o| o.3).collect::<Vec<_>>().join(" ");
+    assert!(has(&text, "sem evidência visual"));
+    assert!(has(&text, "Reprocesse"));
+    // O trecho textual continua exportado, com destaque literal.
+    assert!(has(&text, "Pagamento realizado hoje"));
+    assert!(!yellow_rects(&pdf).is_empty());
+    let m = manifest_of(&result);
+    assert_eq!(m["occurrences"][0]["visualEvidence"]["included"], false);
+    assert!(m["occurrences"][0]["visualEvidence"]["reason"].as_str().unwrap().contains("Reprocesse"));
+}
+
+#[test]
+fn invalid_coordinates_and_mismatched_image_size_never_produce_a_fake_highlight() {
+    let e = env();
+    let bad_words = vec![word(0, 1, 0, 9, 900, 40, 90, 16)]; // fora dos 320×200
+    let (_, bad, _) = e.ocr_image("fora.png", "Pagamento realizado", bad_words, full_bbox(), 90.0);
+    let wrong_size = Some(BBox { x: 20, y: 40, w: 188, h: 46, image_width: 640, image_height: 400 }); // imagem real é 320×200
+    let (_, mismatch, _) = e.ocr_image("outra.png", "Pagamento realizado hoje", pagamento_words(), wrong_size, 90.0);
+    let result = e.export(vec![bad, mismatch], "pagamento").unwrap();
+    assert_eq!(result.visual_evidence_count, 0);
+    let pdf = report_of(&result);
+    assert!(image_ops(&pdf).is_empty());
+    let text = text_ops(&pdf).into_iter().map(|o| o.3).collect::<Vec<_>>().join(" ");
+    assert!(has(&text, "inválidas"));
+    assert!(has(&text, "não conferem"));
+}
+
+#[test]
+fn low_ocr_confidence_is_flagged_next_to_the_image() {
+    let e = env();
+    let (_, id, _) = e.ocr_image("baixa.png", "Pagamento realizado hoje", pagamento_words(), full_bbox(), 41.0);
+    let result = e.export(vec![id], "pagamento").unwrap();
+    let text = text_ops(&report_of(&result)).into_iter().map(|o| o.3).collect::<Vec<_>>().join(" ");
+    assert!(has(&text, "confiança baixa do OCR (41%)"));
+}
+
+#[test]
+fn modified_source_is_not_used_for_a_visual_and_no_copy_is_presented_as_verified() {
+    let e = env();
+    let (_, with_image, original) = e.ocr_image("mudou.png", "Pagamento realizado hoje", pagamento_words(), full_bbox(), 90.0);
+    e.file("outro.txt", "outro pagamento qualquer", StorageMode::Reference);
+    let ids = e.ids("pagamento");
+    assert!(ids.contains(&with_image) && ids.len() == 2);
+    fs::write(&original, png_file(320, 201)).unwrap(); // o arquivo mudou depois da importação
+    let result = e.export(ids, "pagamento").unwrap_or_else(|err| panic!("{err:?}"));
+    assert_eq!(result.visual_evidence_count, 0);
+    assert!(image_ops(&report_of(&result)).is_empty());
+    let m = manifest_of(&result);
+    let occ = m["occurrences"].as_array().unwrap().iter().find(|o| o["originalName"] == "mudou.png").unwrap();
+    assert_eq!(occ["visualEvidence"]["included"], false);
+    assert!(occ["sourceFile"].is_null() && occ["sourceSha256"].is_null());
+}
+
+#[test]
+fn semantic_selection_that_is_not_in_the_current_results_is_rejected() {
+    let e = env();
+    let (_, recibo, _) = e.ocr_image("recibo.png", "Recebi o comprovante da transferencia", Vec::new(), full_bbox(), 93.0);
+    let agenda = e.pasted("agenda", "A reuniao fica para quinta-feira.");
+    let embedder = ConceptEmbedder::new();
+    let lock = Mutex::new(());
+    crate::semantic::index_project(&e.project, &embedder, &lock, &std::sync::atomic::AtomicBool::new(false), &mut |_, _, _| {}).unwrap();
+    let conn = docstore::connect(&e.project.dir).unwrap();
+    let agenda_segment: i64 = conn.query_row("SELECT id FROM text_segment WHERE document_id = ?1", [&agenda], |r| r.get(0)).unwrap();
+
+    let sel = e.selection_mode(vec![recibo, agenda_segment], "pagamento", SearchMode::Semantic);
+    let err = prepare_review_with(&e.project, &sel, Some(&embedder)).unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidQuery, "seleção fora dos resultados é recusada");
+    let only_ok = e.selection_mode(vec![recibo], "pagamento", SearchMode::Semantic);
+    assert!(prepare_review_with(&e.project, &only_ok, Some(&embedder)).is_ok());
+
+    // Sem o modelo, a exportação semântica é recusada com erro claro (e nada é criado).
+    let err = export_evidence_with(&e.project, &only_ok, &e.dest, None).unwrap_err();
+    assert_eq!(err.code, ErrorCode::SemanticUnavailable);
+    assert!(names(&e.dest).is_empty());
+}
+
+#[test]
+fn text_only_exports_keep_working_and_report_zero_visuals() {
+    let e = env();
+    e.file("conversa.txt", "Vou fazer o pagamento na próxima sexta-feira.", StorageMode::Reference);
+    let result = e.export(e.ids("pagamento"), "pagamento").unwrap();
+    assert_eq!(result.visual_evidence_count, 0);
+    let pdf = report_of(&result);
+    assert!(image_ops(&pdf).is_empty());
+    let text = text_ops(&pdf).into_iter().map(|o| o.3).collect::<Vec<_>>().join(" ");
+    assert!(!has(&text, "sem evidência visual"), "arquivos de texto não geram aviso de imagem");
+    assert!(has(&text, "Pesquisa exata (lexical)"));
+    assert!(!yellow_rects(&pdf).is_empty(), "o trecho literal está marcado em amarelo");
 }

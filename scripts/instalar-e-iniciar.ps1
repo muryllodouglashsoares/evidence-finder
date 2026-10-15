@@ -1,6 +1,6 @@
 ﻿# Evidence Finder - instalador e inicializador para Windows.
-# Instala o que faltar (Node.js, Rust, Ferramentas C++, WebView2, Tesseract OCR), compila o app
-# na primeira vez e o abre. Nas proximas vezes, apenas abre o app.
+# Instala o que faltar (Node.js, Rust, Ferramentas C++, WebView2, Tesseract OCR e o modelo de
+# busca semantica), compila o app na primeira vez e o abre. Nas proximas vezes, apenas abre o app.
 param([switch]$Recompilar)
 
 $ErrorActionPreference = "Stop"
@@ -77,16 +77,31 @@ function Garantir-Tesseract {
     }
 }
 
+# Modelo de busca semantica (~470 MB, baixado uma unica vez e conferido por SHA-256).
+# Tambem e opcional: falha vira aviso (a busca exata nao depende dele). Se ja estiver instalado,
+# a verificacao e local e instantanea, sem acesso a internet.
+function Garantir-Modelo {
+    try {
+        $script = Join-Path $PSScriptRoot "instalar-modelo.ps1"
+        Titulo "Verificando o modelo de busca semantica"
+        & powershell -NoProfile -ExecutionPolicy Bypass -File $script -Sim
+        if ($LASTEXITCODE -ne 0) { Write-Host "AVISO: o modelo de busca semantica nao foi instalado. O app abre normalmente, so com busca exata." -ForegroundColor Yellow }
+    } catch {
+        Write-Host "AVISO: modelo de busca semantica nao configurado ($($_.Exception.Message))." -ForegroundColor Yellow
+    }
+}
+
 try {
     Write-Host "Evidence Finder" -ForegroundColor Green
     Write-Host "Tudo roda no seu computador. Nada e enviado para a internet pelo aplicativo."
-    Write-Host "(A internet so e usada agora, para baixar as ferramentas de instalacao.)"
+    Write-Host "(A internet so e usada agora, para baixar as ferramentas de instalacao e o modelo de busca semantica.)"
 
     Atualizar-Path
     $exe = Join-Path $raiz "src-tauri\target\release\evidence-finder.exe"
 
     if ((Test-Path $exe) -and -not $Recompilar) {
         if (-not (Achar-Tesseract)) { Garantir-Tesseract }
+        Garantir-Modelo
         Titulo "Abrindo o Evidence Finder"
         Start-Process $exe
         return
@@ -127,6 +142,7 @@ try {
     } else { Write-Host "WebView2: ok" }
 
     Garantir-Tesseract
+    Garantir-Modelo
 
     Atualizar-Path
     foreach ($c in @("node", "npm", "cargo")) {

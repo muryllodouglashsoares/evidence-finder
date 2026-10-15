@@ -85,6 +85,7 @@ impl Block {
             char_end: Some(self.char_start + len),
             bbox: None,
             confidence: None,
+            words: Vec::new(),
         }
     }
 }
@@ -193,6 +194,7 @@ fn split_long_line(
                 char_end: Some(offset + len),
                 bbox: None,
                 confidence: None,
+                words: Vec::new(),
             });
         }
         offset += piece.chars().count() as u64;

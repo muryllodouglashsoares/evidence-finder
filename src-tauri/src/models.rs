@@ -258,6 +258,28 @@ pub struct ImportResult {
     pub failed: Vec<ImportFailure>,
 }
 
+/// O que a exclusão de um projeto removeria (Fase 6). Não altera nada.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeletionPreview {
+    pub project_name: String,
+    pub document_count: u32,
+    /// Cópias gerenciadas pelo projeto (serão excluídas do disco).
+    pub managed_files: u32,
+    pub managed_bytes: u64,
+    /// Documentos apenas referenciados: os arquivos originais NÃO são tocados.
+    pub referenced_documents: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteProjectResult {
+    pub managed_files_deleted: u32,
+    /// `true` se a pasta do projeto foi removida. `false` quando ela contém
+    /// itens que não pertencem ao projeto (que nunca são apagados).
+    pub folder_removed: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoveResult {

@@ -56,6 +56,7 @@ impl Env {
             sort: SearchSort::Relevance,
             limit: None,
             offset: None,
+            mode: Default::default(),
         })
     }
     fn req(&self, r: SearchRequest) -> SearchResponse {
@@ -79,7 +80,7 @@ fn code(r: Result<SearchResponse, AppError>) -> ErrorCode {
 }
 
 fn req(query: &str) -> SearchRequest {
-    SearchRequest { query: query.into(), filters: SearchFilters::default(), sort: SearchSort::Relevance, limit: None, offset: None }
+    SearchRequest { query: query.into(), filters: SearchFilters::default(), sort: SearchSort::Relevance, limit: None, offset: None, mode: Default::default() }
 }
 
 // --- consulta -----------------------------------------------------------

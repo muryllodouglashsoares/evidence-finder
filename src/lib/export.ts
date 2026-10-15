@@ -11,8 +11,10 @@ import type {
   ExportReview,
   ExportSelection,
   FilterSummary,
+  ReviewOccurrence,
   SearchFilters,
   SearchHit,
+  SearchMode,
 } from "../types/contracts";
 import { FORMAT_LABEL } from "./documents";
 
@@ -30,9 +32,12 @@ export function selectionScope(
   query: string | null,
   filters: SearchFilters,
   documentsSignature: string,
+  mode: SearchMode = "lexical",
 ): string | null {
   if (query === null) return null;
   return JSON.stringify({
+    // A modalidade muda o conjunto de resultados; omitida quando lexical (escopos antigos iguais).
+    ...(mode !== "lexical" ? { mode } : {}),
     query,
     documentIds: [...filters.documentIds].sort(),
     formats: [...filters.formats].sort(),
@@ -127,8 +132,30 @@ export function buildExportSelection(
   query: string,
   filters: SearchFilters,
   items: SearchHit[],
+  mode: SearchMode = "lexical",
 ): ExportSelection {
-  return { segmentIds: items.map((i) => i.segmentId), query: query.trim(), filters };
+  return {
+    segmentIds: items.map((i) => i.segmentId),
+    query: query.trim(),
+    filters,
+    ...(mode !== "lexical" ? { mode } : {}),
+  };
+}
+
+/** Quantas ocorrências terão evidência visual (imagem com destaque amarelo) segundo a revisão. */
+export function visualEvidenceCounts(occurrences: ReadonlyArray<Pick<ReviewOccurrence, "visual" | "format">>): {
+  withVisual: number;
+  withoutVisual: number;
+  /** Ocorrências de imagem/PDF sem evidência visual (os .txt não contam: não têm imagem). */
+  missingApplicable: number;
+} {
+  let withVisual = 0;
+  let missingApplicable = 0;
+  for (const o of occurrences) {
+    if (o.visual.available) withVisual += 1;
+    else if (o.format !== "txt") missingApplicable += 1;
+  }
+  return { withVisual, withoutVisual: occurrences.length - withVisual, missingApplicable };
 }
 
 export function discardedNotice(count: number): string {

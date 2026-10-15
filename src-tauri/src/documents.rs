@@ -222,6 +222,68 @@ pub(crate) fn resolve_managed(project_dir: &Path, relative: &str) -> Result<Path
     Ok(project_dir.join(MANAGED_DIR).join(file))
 }
 
+/// `true` se `name` é um nome que o próprio app gera na pasta gerenciada:
+/// `<uuid>.<ext>` (cópia) ou `<uuid>.part` (cópia incompleta).
+pub(crate) fn is_owned_managed_name(name: &str) -> bool {
+    match name.strip_suffix(".part") {
+        Some(stem) => resolve_managed(Path::new(""), &format!("{MANAGED_DIR}/{stem}.txt")).is_ok(),
+        None => resolve_managed(Path::new(""), &format!("{MANAGED_DIR}/{name}")).is_ok(),
+    }
+}
+
+/// Arquivos regulares pertencentes ao projeto dentro de `files/`. Atalhos,
+/// subpastas e qualquer nome que o app não gera são ignorados (nunca tocados).
+/// Se `files` não existir, a lista é vazia; se for atalho ou não for pasta, erro.
+pub(crate) fn owned_managed_files(project_dir: &Path) -> Result<Vec<(PathBuf, u64, std::time::SystemTime)>, AppError> {
+    let dir = project_dir.join(MANAGED_DIR);
+    match fs::symlink_metadata(&dir) {
+        Ok(m) if m.is_dir() => {}
+        Ok(_) => {
+            return Err(err(
+                ErrorCode::CorruptProject,
+                "A pasta \"files\" do projeto é inválida ou foi substituída. Nada foi alterado.",
+            ))
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(AppError::from(e)),
+    }
+    let mut out = Vec::new();
+    for entry in fs::read_dir(&dir)? {
+        let entry = entry?;
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        if !is_owned_managed_name(&name) {
+            continue;
+        }
+        let meta = fs::symlink_metadata(entry.path())?;
+        if meta.file_type().is_file() {
+            out.push((entry.path(), meta.len(), meta.modified().unwrap_or(UNIX_EPOCH)));
+        }
+    }
+    Ok(out)
+}
+
+/// Recuperação após encerramento inesperado: remove cópias incompletas
+/// (`<uuid>.part`) deixadas por uma importação interrompida. Só considera
+/// arquivos com pelo menos `min_age` (uma importação em andamento, inclusive de
+/// outra instância, é recente). Cópias já finalizadas nunca são removidas.
+pub fn recover_partial_copies(project_dir: &Path, min_age: std::time::Duration) -> u32 {
+    let Ok(files) = owned_managed_files(project_dir) else {
+        return 0;
+    };
+    let now = std::time::SystemTime::now();
+    let mut removed = 0;
+    for (path, _, modified) in files {
+        let is_part = path.extension().is_some_and(|e| e == "part");
+        let old_enough = now.duration_since(modified).map(|d| d >= min_age).unwrap_or(false);
+        if is_part && old_enough && fs::remove_file(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
 // ---------------------------------------------------------------------------
 // Importação
 // ---------------------------------------------------------------------------
@@ -356,6 +418,15 @@ fn import_file(
     mode: StorageMode,
 ) -> Result<Outcome, AppError> {
     let not_file = || err(ErrorCode::InvalidFile, "O item selecionado não é um arquivo.");
+    // O caminho já chega canônico (resolvido na seleção). Se agora for um
+    // atalho, foi trocado depois da escolha: recusa em vez de segui-lo.
+    let link_meta = fs::symlink_metadata(path)?;
+    if link_meta.file_type().is_symlink() {
+        return Err(err(
+            ErrorCode::InvalidFile,
+            "O arquivo selecionado foi substituído por um atalho depois da escolha. Selecione-o novamente.",
+        ));
+    }
     let meta = fs::metadata(path)?;
     if !meta.is_file() {
         return Err(not_file());
