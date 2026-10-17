@@ -512,7 +512,19 @@ fn several_occurrences_on_one_image_get_numbered_tags() {
         let (_, _, y, _) = ops.iter().find(|(_, _, _, t)| t == label).expect("etiqueta");
         assert!(*y >= iy + ih - 0.01, "etiqueta {label} fica acima da imagem, sem cobri-la");
     }
-    assert!(yellow_rects(&pdf).iter().filter(|(_, r)| r[2] > 50.0 && r[3] > 5.0).count() >= 2);
+    // Os dois destaques ficam DENTRO da imagem (80×60 pt) e nas posições normalizadas
+    // pedidas; as etiquetas amarelas ficam fora dela (acima).
+    let [ix, iy, iw, ih] = image_ops(&pdf)[0].1;
+    let inside: Vec<[f32; 4]> = yellow_rects(&pdf)
+        .into_iter()
+        .map(|(_, r)| r)
+        .filter(|r| r[0] >= ix - 0.01 && r[1] >= iy - 0.01 && r[0] + r[2] <= ix + iw + 0.01 && r[1] + r[3] <= iy + ih + 0.01)
+        .collect();
+    assert_eq!(inside.len(), 2, "um destaque por ocorrência: {inside:?}");
+    for (r, n) in inside.iter().zip([a, b]) {
+        assert!((r[0] - (ix + n.x as f32 * iw)).abs() < 0.1 && (r[2] - n.w as f32 * iw).abs() < 0.1);
+        assert!((r[1] + r[3] - (iy + ih - n.y as f32 * ih)).abs() < 0.1 && (r[3] - n.h as f32 * ih).abs() < 0.1);
+    }
 }
 
 #[test]

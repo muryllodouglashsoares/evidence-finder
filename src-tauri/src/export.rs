@@ -204,6 +204,8 @@ pub struct ExportResult {
 // ---------------------------------------------------------------------------
 
 struct OccurrenceData {
+    /// Trecho de PDF com texto digital: a região é obtida do renderizador na exportação.
+    pdf_text: bool,
     number: u32,
     segment_id: i64,
     document_id: String,
@@ -220,6 +222,8 @@ struct OccurrenceData {
 struct DocData {
     row: DocumentRow,
     engine: Option<String>,
+    /// Versão do extrator que produziu as coordenadas do OCR.
+    extractor_version: Option<i64>,
     exported_name: String,
     occurrences: Vec<u32>,
 }
@@ -356,11 +360,17 @@ fn take_snapshot(
                 let words = extraction_store::words_for_segment(&tx, *id)?;
                 visual::derive_regions(kind, segment.bbox.clone(), &words, &literal_ranges)
             } else if segment.method == crate::extraction_store::SegmentMethod::PdfText {
-                Err("Página de PDF com texto digital: o aplicativo não possui renderizador de páginas, então não há como localizar o trecho na imagem da página.".to_string())
+                Err(if crate::pdf_visual::is_available() {
+                    "PDF com texto digital: a posição do trecho na página é confirmada ao exportar. Se não puder ser localizada com segurança, o relatório mantém só o texto.".to_string()
+                } else {
+                    "PDF com texto digital: o renderizador de páginas (PDFium) não está instalado neste computador, então não há evidência visual. O texto e a referência da página foram mantidos.".to_string()
+                })
             } else {
                 Err("Documento de texto: não há imagem de origem.".to_string())
             };
+            let pdf_text = segment.method == crate::extraction_store::SegmentMethod::PdfText;
             occurrences.push(OccurrenceData {
+                pdf_text,
                 number: index as u32 + 1,
                 segment_id: *id,
                 document_id,
@@ -388,12 +398,15 @@ fn take_snapshot(
         if row.project_id != project.id {
             return Err(AppError::new(ErrorCode::NotFound, "Documento não encontrado neste projeto."));
         }
-        let engine = extraction_store::get(&tx, &row.id)?.and_then(|e| e.engine);
+        let extraction = extraction_store::get(&tx, &row.id)?;
+        let engine = extraction.as_ref().and_then(|e| e.engine.clone());
+        let extractor_version = extraction.as_ref().and_then(|e| e.extractor_version);
         let exported_name = format!("arquivo_{:03}.{}", documents.len() + 1, row.format.managed_extension());
         index_of.insert(row.id.clone(), documents.len());
         documents.push(DocData {
             row,
             engine,
+            extractor_version,
             exported_name,
             occurrences: vec![occ.number],
         });
@@ -711,6 +724,14 @@ fn build_visuals(
     for occ in &snap.occurrences {
         let di = doc_index[occ.document_id.as_str()];
         match &occ.regions {
+            // PDF com texto digital: candidato ao renderizador (a região sai na exportação).
+            Err(_) if occ.pdf_text && outcomes[di].status == FileStatus::Exported => {
+                let key = (di, occ.location.page_number);
+                if !groups.contains_key(&key) {
+                    order.push(key);
+                }
+                groups.entry(key).or_default().push(occ);
+            }
             Err(reason) => {
                 status.insert(occ.number, VisualResult::no(reason.clone()));
             }
@@ -747,20 +768,79 @@ fn build_visuals(
                 continue;
             }
         };
+        let pdf_group = occs[0].pdf_text;
+        let mut pdf_regions: HashMap<u32, Result<Regions, String>> = HashMap::new();
+        let mut pdf_notice: Option<String> = None;
+        let image = if pdf_group {
+            let Some(page) = key.1 else {
+                fail_all(&mut status, "Página do PDF não registrada.");
+                continue;
+            };
+            let queries: Vec<crate::pdf_visual::Query<'_>> = occs
+                .iter()
+                .map(|o| crate::pdf_visual::Query { number: o.number, segment_text: &o.text, literal_ranges: &o.literal_ranges })
+                .collect();
+            match crate::pdf_visual::locate(&bytes, page, &queries) {
+                Err(reason) => {
+                    fail_all(&mut status, &reason);
+                    continue;
+                }
+                Ok(render) => {
+                    for (number, result) in render.rects {
+                        pdf_regions.insert(
+                            number,
+                            result.map(|rects| Regions { rects, kind: HighlightKind::Words, notices: Vec::new() }),
+                        );
+                    }
+                    pdf_notice = Some(
+                        "Página de PDF com texto digital, renderizada localmente. A posição do destaque foi obtida do renderizador e conferida contra o texto indexado."
+                            .to_string(),
+                    );
+                    visual::VisualImage {
+                        width: render.width,
+                        height: render.height,
+                        pixel_width: render.width,
+                        pixel_height: render.height,
+                        data: visual::ImageData::Raw { data: render.rgb, gray: false },
+                        notices: Vec::new(),
+                    }
+                }
+            }
+        } else {
         let expected = occs[0].location.bbox.as_ref().map(|b| (b.image_width as u32, b.image_height as u32));
-        let image = match visual::load_image(doc.row.format, &bytes, key.1, expected) {
+        match visual::load_image(
+            doc.row.format,
+            &bytes,
+            key.1,
+            expected,
+            doc.extractor_version.is_some_and(|v| v >= crate::extraction::EXIF_CORRECTED_SINCE),
+        ) {
             Ok(i) => i,
             Err(reason) => {
                 fail_all(&mut status, &reason);
                 continue;
             }
+        }
         };
-
         let mut entries = Vec::new();
         let mut notices: Vec<String> = Vec::new();
         let (mut any_words, mut any_para) = (false, false);
         for o in occs {
-            let Ok(regions) = &o.regions else { continue };
+            let regions = if pdf_group {
+                match pdf_regions.get(&o.number) {
+                    Some(Ok(r)) => r,
+                    Some(Err(reason)) => {
+                        status.insert(o.number, VisualResult::no(reason.clone()));
+                        continue;
+                    }
+                    None => continue,
+                }
+            } else {
+                match &o.regions {
+                    Ok(r) => r,
+                    Err(_) => continue,
+                }
+            };
             match regions.kind {
                 HighlightKind::Words => any_words = true,
                 HighlightKind::Paragraph => any_para = true,
@@ -813,6 +893,12 @@ fn build_visuals(
                 o.number,
                 VisualResult { included: true, highlight: Some(regions.kind), reason: None },
             );
+        }
+        if entries.is_empty() {
+            continue; // nenhuma ocorrência do grupo pôde ser localizada: só texto (motivos já registrados)
+        }
+        if let Some(n) = pdf_notice {
+            notices.push(n);
         }
         let numbers: Vec<String> = entries.iter().map(|e| format!("{:03}", e.number)).collect();
         let heading = format!(

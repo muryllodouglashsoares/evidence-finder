@@ -2,7 +2,7 @@
 
 Aplicação desktop para Windows, **100% local**, para pesquisar informações em capturas de tela, imagens, conversas em texto, arquivos TXT e PDFs.
 
-> **Esta é a Fase 5 (exportação de evidências) e NÃO representa o produto completo.** O aplicativo cria projetos, importa documentos, extrai o texto localmente, permite **pesquisar** esse texto (SQLite FTS5) e agora **exporta** os resultados selecionados em um pacote local (relatório PDF, fontes verificadas e `manifest.json`). **Busca semântica/IA e o endurecimento final de segurança ainda não existem, e a Fase 5 ainda não foi validada em um Windows real (veja "Limitações da Fase 5").**
+> **Estado (Fase 7):** o núcleo foi compilado e testado em Linux (258 testes Rust e 82 do frontend passam, inclusive com a rede bloqueada). **Nada foi verificado em Windows real**, o instalador nunca foi gerado, e a busca semântica com o **modelo real** ainda não foi executada. O estado detalhado, as medições e a matriz de requisitos estão em [`docs/FASE7.md`](docs/FASE7.md); a distribuição, em [`docs/DISTRIBUICAO.md`](docs/DISTRIBUICAO.md).
 
 ## Objetivo
 
@@ -10,9 +10,9 @@ Permitir que a pessoa reúna material em projetos locais (até ~500 arquivos por
 
 Princípios: privacidade, rastreabilidade das fontes, confiabilidade e funcionamento offline.
 
-## Estado atual (Fase 7 — escrita, ainda não compilada nem testada)
+## Estado atual (Fase 7 — compilada e testada em Linux; pendente em Windows e com o modelo real)
 
-> **Aviso:** o código da Fase 7 foi escrito e revisado à mão em um ambiente sem `cargo`, `npm` nem rede. Ele **ainda não foi compilado e os testes novos nunca foram executados**. Rode `npm run check` e `cargo test` (ver `docs/FASE7.md`) antes de considerar a fase concluída.
+> **Verificado em Linux:** `npm run check` e `cargo test` (258 testes) passam, também com a rede bloqueada. **Não verificado:** Windows real, o modelo semântico real (qualidade, memória, calibração do limiar), o instalador e a leitura do PDF em um leitor real. Veja `docs/FASE7.md`.
 
 | Funcionalidade | Estado |
 | --- | --- |
@@ -36,9 +36,11 @@ Princípios: privacidade, rastreabilidade das fontes, confiabilidade e funcionam
 | Exclusão segura de projeto (cópias gerenciadas + banco; nunca os originais), com confirmação | Implementado (Fase 6) |
 | Recuperação de resíduos (`*.part`, pastas temporárias de exportação abandonadas) | Implementado (Fase 6) |
 | Tokens de pasta vinculados à finalidade, validação de identificadores no núcleo | Implementado (Fase 6) |
-| Busca semântica local (exata / por significado / híbrida), modelo baixado e conferido pelos scripts `.bat`, busca sem rede | Implementado no código (Fase 7) — **não compilado/testado**; qualidade semântica não medida |
-| Índice semântico (migração aditiva v5, vetores por conteúdo, invalidação, indexação cancelável) | Implementado no código (Fase 7) — **não compilado/testado** |
-| PDF com destaque amarelo nos trechos e evidências visuais (imagem à esquerda, descrição à direita) | Implementado no código (Fase 7) — **não compilado/testado**; sem imagem para PDF de texto digital |
+| Busca semântica local (exata / por significado / híbrida), sem rede | Lógica validada por testes (gerador de teste); **modelo real não executado**, limiar não calibrado |
+| Índice semântico (migração aditiva v5, vetores por conteúdo, invalidação, indexação cancelável) | Validado por testes |
+| PDF com destaque amarelo e evidências visuais (imagem à esquerda, descrição à direita) | Validado para imagens, PDFs digitalizados com uma imagem e **PDFs com texto digital (exige PDFium)**; leitura em leitor real pendente |
+| Orientação EXIF de fotos (OCR e relatório na mesma orientação) | Validado (8 orientações + Tesseract real) |
+| Instalador Windows (completo / enxuto / sem motor), modelo e OCR empacotados | Script escrito (`scripts/preparar-distribuicao.ps1`); **nunca executado** |
 
 ## Como importar documentos
 
@@ -116,7 +118,7 @@ npm run test:rust      # cargo test (núcleo: criação, abertura, persistência
 npm run check          # todos os anteriores
 ```
 
-Os testes Rust (181: 125 das fases anteriores + 39 da Fase 5 + 17 da Fase 6) cobrem, além da Fase 1: importação de PNG/JPEG/TXT/PDF nas duas modalidades, texto colado, lotes com falhas individuais, persistência após reabrir, duplicatas, arquivos inexistentes/sem permissão, falhas de cópia, nomes e caminhos maliciosos (banco adulterado, pasta `files` substituída por arquivo ou atalho), remoção sem tocar nos originais, limite de 500, integridade das cópias, arquivos modificados e migração v1→v2 preservando dados. Os da Fase 3 cobrem decodificação e segmentação de texto, PDF com páginas, PDF digitalizado com OCR real (JPEG, Flate cinza e 1 bit), PNG/JPEG com e sem texto, dependência de OCR ausente, arquivos corrompidos, falha individual sem interromper o lote, reprocessamento sem duplicar, detecção de arquivo alterado por hash, extrator desatualizado, persistência após reabrir, remoção em cascata, migração v2→v3 e limites. Os testes de OCR real são pulados (com aviso em stderr) se o Tesseract com idioma `por` não estiver instalado; os demais rodam sempre. Os da Fase 4 cobrem a montagem segura da consulta, busca por palavra/frase/combinação, acentos e maiúsculas, caracteres especiais e operadores, ordenação por relevância, prévia e destaque, filtros combinados, paginação, isolamento entre projetos, contexto, migração de um projeto da Fase 3 (v3→v4) sem reimportar, ausência de duplicação ao reprocessar, remoção em cascata no índice, recuperação de um índice interrompido, consistência ao reabrir e a validação da abertura da fonte (ausente, alterada, outro projeto, extensão adulterada). Os testes do front (Vitest) cobrem contratos com o núcleo (só ids/tokens, nunca caminhos), validação da consulta, filtros, descrição da origem e o redutor que descarta respostas obsoletas. Os da Fase 5 estão descritos em "Exportação de evidências".
+Os testes Rust (258 passam e 10 dependem de recursos externos e ficam `ignored`: Tesseract, PDFium, modelo e benchmark; ver `docs/FASE7.md`) cobrem, além da Fase 1: importação de PNG/JPEG/TXT/PDF nas duas modalidades, texto colado, lotes com falhas individuais, persistência após reabrir, duplicatas, arquivos inexistentes/sem permissão, falhas de cópia, nomes e caminhos maliciosos (banco adulterado, pasta `files` substituída por arquivo ou atalho), remoção sem tocar nos originais, limite de 500, integridade das cópias, arquivos modificados e migração v1→v2 preservando dados. Os da Fase 3 cobrem decodificação e segmentação de texto, PDF com páginas, PDF digitalizado com OCR real (JPEG, Flate cinza e 1 bit), PNG/JPEG com e sem texto, dependência de OCR ausente, arquivos corrompidos, falha individual sem interromper o lote, reprocessamento sem duplicar, detecção de arquivo alterado por hash, extrator desatualizado, persistência após reabrir, remoção em cascata, migração v2→v3 e limites. Os testes de OCR real são pulados (com aviso em stderr) se o Tesseract com idioma `por` não estiver instalado; os demais rodam sempre. Os da Fase 4 cobrem a montagem segura da consulta, busca por palavra/frase/combinação, acentos e maiúsculas, caracteres especiais e operadores, ordenação por relevância, prévia e destaque, filtros combinados, paginação, isolamento entre projetos, contexto, migração de um projeto da Fase 3 (v3→v4) sem reimportar, ausência de duplicação ao reprocessar, remoção em cascata no índice, recuperação de um índice interrompido, consistência ao reabrir e a validação da abertura da fonte (ausente, alterada, outro projeto, extensão adulterada). Os testes do front (Vitest) cobrem contratos com o núcleo (só ids/tokens, nunca caminhos), validação da consulta, filtros, descrição da origem e o redutor que descarta respostas obsoletas. Os da Fase 5 estão descritos em "Exportação de evidências".
 
 ## Build
 
@@ -201,7 +203,7 @@ Como obter (Windows): instale o Tesseract (por exemplo, o instalador do projeto 
 
 - **PDF digitalizado:** o OCR usa a imagem embutida em cada página. Suportados: JPEG (DCT) e imagens Flate/LZW em cinza ou RGB de 8 bits, e cinza de 1 bit. **Não suportados** (falha explícita, sem OCR simulado): CCITT, JBIG2 e JPEG 2000 (comuns em digitalizações em preto e branco), paleta indexada, CMYK, imagens dentro de formulários aninhados e páginas cujo texto foi convertido em desenho vetorial. Páginas com mais de uma imagem relevante são lidas, mas sem caixa delimitadora.
 - PDFs protegidos por senha são recusados com mensagem; o texto de PDFs com fontes incomuns pode sair incompleto (a leitura de PDF é em Rust puro; PDFs problemáticos são isolados e falham sem derrubar o app). Texto de PDF não guarda linha/posição (somente página).
-- OCR de imagens não aplica rotação EXIF; a qualidade depende de resolução e legibilidade (a confiança fica registrada; média abaixo de 60% gera aviso).
+- A rotação EXIF de fotos JPEG agora é aplicada (Fase 7); a qualidade depende de resolução e legibilidade (a confiança fica registrada; média abaixo de 60% gera aviso).
 - O progresso é por documento (não por página). Não há botão de cancelar o lote.
 - O conteúdo extraído fica **sem criptografia** no SQLite do projeto (como o resto dos dados). Proteja a pasta do projeto (por exemplo com BitLocker).
 - Não testado em Windows (ver "Limitações conhecidas"); os testes de OCR real rodaram em Linux com Tesseract 5.3.4.
@@ -343,14 +345,17 @@ Exportação em pasta temporária com publicação atômica por `rename` (falhas
 - Falhas de PDF/OCR já eram isoladas por documento (`catch_unwind` + `panic = "unwind"`); um estouro de pilha ou *abort* de uma biblioteca nativa/Tesseract (processo externo) pode, em tese, não ser recuperável. Não há teste de carga com 500 arquivos reais e nenhum número de desempenho é prometido.
 - `cargo audit`, revisão jurídica de licenças e teste de carga continuam pendentes.
 
-## Fase 7 — busca semântica local e evidências visuais
+## Fase 7 — busca semântica local, evidências visuais e distribuição
 
-Documentação completa, com o estado real de verificação, o modelo (origem, licença, requisitos), a migração, o formato do PDF e as limitações: **[`docs/FASE7.md`](docs/FASE7.md)**.
+Documentação completa, com o estado real de verificação, medições, limitações e a matriz de requisitos: **[`docs/FASE7.md`](docs/FASE7.md)**. Instalador, variantes e verificações pendentes em Windows: **[`docs/DISTRIBUICAO.md`](docs/DISTRIBUICAO.md)**.
 
-Resumo: três modalidades de pesquisa (exata, por significado, híbrida) sobre embeddings locais (`multilingual-e5-small` via `candle`, instalado por `INICIAR.bat`/`RECOMPILAR.bat`; o aplicativo em si nunca baixa nada e a busca exata funciona sem ele); coordenadas por palavra do OCR guardadas para destacar só o trecho encontrado; relatório PDF com destaque amarelo, índice das ocorrências e blocos "imagem à esquerda, descrição à direita". Projetos antigos precisam reprocessar os documentos de imagem para ter evidência visual: ao abrir o projeto, eles aparecem como "desatualizados" (versão do extrator 3) e o botão **Processar pendentes** os refaz.
+Resumo: três modalidades de pesquisa (exata, por significado, híbrida) sobre embeddings locais (`multilingual-e5-small` via `candle`; o aplicativo nunca baixa nada e a busca exata funciona sem o modelo); relatório PDF com destaque amarelo e blocos "imagem à esquerda, descrição à direita", agora também para fotos com orientação EXIF e para PDFs com texto digital (com PDFium). Projetos antigos precisam reprocessar documentos de imagem para ter evidência visual (extrator versão 4).
 
-### Pendências antes de chamar a Fase 7 de concluída
-1. Compilar (`cargo build`, `npm run check`, `cargo test`) e corrigir o que aparecer — nada disso foi executado.
-2. Instalar o modelo, gerar o índice em um projeto real, medir RAM/tempo e calibrar o limiar de similaridade.
-3. Gerar um PDF real com uma imagem e conferir a legibilidade em um leitor.
-4. Instalador do Windows com o modelo embutido (fora desta entrega).
+### Requisitos do sistema
+Windows 10 (1809+) ou 11, 64 bits (declarado, não testado). Modelo: ~470 MB em disco. Memória do modelo e tamanho do instalador: **não medidos**. Desenvolvimento: Node.js >= 20, Rust estável recente (compilado com 1.91.1; o `rust-version` do `Cargo.toml` não foi verificado), Ferramentas C++ e WebView2.
+
+### Pendências
+1. Executar `real_model_*` com o modelo instalado e calibrar o limiar de similaridade.
+2. Gerar e testar o instalador em um Windows limpo (lista em `docs/DISTRIBUICAO.md`).
+3. Conferir o PDF gerado em um leitor real; medir memória e desempenho em Windows e em `release`.
+4. Criptografia do armazenamento (estratégia em `docs/FASE7.md`), `cargo audit` e revisão de licenças.

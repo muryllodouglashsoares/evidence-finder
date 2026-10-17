@@ -18,7 +18,9 @@ pub mod extraction;
 pub mod extraction_store;
 pub mod models;
 pub mod ocr;
+pub mod orientation;
 pub mod pdf_extract;
+pub mod pdf_visual;
 pub mod pdf_report;
 pub mod paths;
 pub mod registry;
@@ -33,6 +35,10 @@ pub mod visual;
 
 #[cfg(test)]
 mod security_tests;
+#[cfg(test)]
+mod perf_tests;
+#[cfg(all(test, feature = "semantic-model"))]
+mod real_model_tests;
 
 use tauri::Manager;
 

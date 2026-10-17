@@ -54,6 +54,8 @@ tokenizers = { version = "0.21", default-features = false, features = ["onig"], 
 # Fase 7 (evidências visuais): decodifica PNG para incorporá-lo ao relatório PDF
 # (MIT/Apache-2.0). JPEG é incorporado sem decodificação (DCTDecode).
 png = "0.17"
+zune-jpeg = "0.4"
+pdfium-render = { version = "0.9.4", default-features = false, features = ["pdfium_latest", "thread_safe"] }
 
 [dev-dependencies]
 tempfile = "3"

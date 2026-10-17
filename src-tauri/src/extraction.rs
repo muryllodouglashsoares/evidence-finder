@@ -43,7 +43,9 @@ use std::sync::{Arc, Mutex};
 /// palavras continuavam como "atualizados" e ficavam sem evidência visual, sem
 /// nenhum botão para refazê-los. Agora todos aparecem como "desatualizados" e
 /// "Processar pendentes" os refaz (substitui os trechos, sem duplicar).
-pub const EXTRACTOR_VERSION: i64 = 3;
+pub const EXTRACTOR_VERSION: i64 = 4;
+/// Primeira versão do extrator que lê fotos JPEG já na orientação EXIF correta.
+pub const EXIF_CORRECTED_SINCE: i64 = 4;
 
 pub const MAX_TXT_BYTES: u64 = 50 * 1024 * 1024;
 pub const MAX_IMAGE_BYTES: u64 = 50 * 1024 * 1024;
@@ -330,8 +332,11 @@ fn extract_txt(row: &DocumentRow, bytes: &[u8]) -> Result<Extracted, AppError> {
 fn extract_image(bytes: &[u8], ocr: &mut OcrProvider) -> Result<Extracted, AppError> {
     // Arquivo inválido é erro do arquivo, independentemente de haver Tesseract.
     ocr::checked_dimensions(bytes)?;
+    // Fotos com EXIF de orientação (celulares) são giradas ANTES do OCR: o Tesseract
+    // ignora a tag e leria o texto deitado. O relatório usa os mesmos pixels orientados.
+    let prepared = crate::orientation::prepare_for_ocr(bytes)?;
     let engine = ocr.get()?;
-    let res = engine.recognize(bytes)?;
+    let res = engine.recognize(&prepared)?;
     let label = engine.engine_label();
     let segments = ocr_segments(res, None, true);
     Ok(Extracted {

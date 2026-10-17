@@ -35,7 +35,10 @@ impl AppState {
             write_lock: Arc::new(Mutex::new(())),
             extraction: Arc::new(crate::extraction::ExtractionJob::default()),
             export_lock: Mutex::new(()),
-            models: Arc::new(crate::embeddings::ModelManager::new(crate::embeddings::model_dir(app_data_dir))),
+            models: Arc::new(crate::embeddings::ModelManager::new(crate::embeddings::resolve_model_dir(
+                app_data_dir,
+                crate::embeddings::bundled_model_dir(),
+            ))),
             semantic: Arc::new(crate::semantic::SemanticJob::default()),
         }
     }

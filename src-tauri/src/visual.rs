@@ -186,7 +186,7 @@ pub fn derive_regions(
 // ---------------------------------------------------------------------------
 
 /// Componentes do JPEG a partir do primeiro SOF (1 = cinza, 3 = RGB/YCbCr, 4 = CMYK).
-fn jpeg_info(bytes: &[u8]) -> Option<(u32, u32, u8)> {
+pub(crate) fn jpeg_info(bytes: &[u8]) -> Option<(u32, u32, u8)> {
     if bytes.len() < 4 || bytes[0] != 0xFF || bytes[1] != 0xD8 {
         return None;
     }
@@ -272,13 +272,39 @@ pub fn jpeg_exif_orientation(bytes: &[u8]) -> Option<u16> {
     None
 }
 
-fn exif_notice(bytes: &[u8]) -> Vec<String> {
-    match jpeg_exif_orientation(bytes) {
-        Some(o) if o != 1 => vec![format!(
-            "A imagem tem orientação EXIF {o}. No relatório ela aparece na orientação dos pixels gravados, a mesma em que o OCR leu o texto; visualizadores de imagem podem exibi-la girada."
-        )],
-        _ => Vec::new(),
+/// Foto JPEG com orientação EXIF: os pixels são girados (os mesmos usados pelo OCR) e
+/// incorporados ao relatório já na orientação correta.
+fn from_oriented_jpeg(bytes: &[u8], expected: Option<(u32, u32)>) -> Result<VisualImage, String> {
+    let img = crate::orientation::oriented_pixels(bytes)
+        .map_err(|e| e.message)?
+        .ok_or("JPEG sem orientação a corrigir.".to_string())?;
+    let (w, h) = (img.width, img.height);
+    if (w as u64) * (h as u64) > MAX_EXPORT_PIXELS {
+        return Err("Dimensões da imagem JPEG inválidas ou grandes demais para o relatório.".to_string());
     }
+    if let Some((ew, eh)) = expected {
+        if (w, h) != (ew, eh) {
+            return Err("As dimensões da imagem não conferem com as registradas pelo OCR.".to_string());
+        }
+    }
+    let (data, dw, dh) = downscale(&img.rgb, w, h, 3, MAX_EMBED_SIDE);
+    let mut notices = vec![format!(
+        "A foto tinha orientação EXIF {}: no relatório ela aparece girada para a posição correta, a mesma em que o OCR leu o texto.",
+        img.applied
+    )];
+    if (dw, dh) != (w, h) {
+        notices.push(format!(
+            "A imagem ({w}×{h} px) foi reduzida para {dw}×{dh} px no relatório; o arquivo original completo está na pasta de evidências."
+        ));
+    }
+    Ok(VisualImage {
+        width: w,
+        height: h,
+        pixel_width: dw,
+        pixel_height: dh,
+        data: ImageData::Raw { data, gray: false },
+        notices,
+    })
 }
 
 fn from_jpeg(bytes: &[u8], expected: Option<(u32, u32)>) -> Result<VisualImage, String> {
@@ -302,7 +328,7 @@ fn from_jpeg(bytes: &[u8], expected: Option<(u32, u32)>) -> Result<VisualImage, 
         pixel_width: w,
         pixel_height: h,
         data: ImageData::Jpeg { data: bytes.to_vec(), gray },
-        notices: exif_notice(bytes),
+        notices: Vec::new(),
     })
 }
 
@@ -450,15 +476,27 @@ fn from_pnm(bytes: &[u8], expected: Option<(u32, u32)>) -> Result<VisualImage, S
 /// Prepara a imagem de uma fonte JÁ VERIFICADA (hash conferido) para o relatório.
 /// `expected` são as dimensões registradas pelo OCR; se divergirem, não há
 /// evidência visual (as coordenadas não valeriam para esta imagem).
+///
+/// `exif_corrected` diz se o OCR deste documento leu a foto JPEG já na orientação EXIF
+/// correta (extrator >= `EXIF_CORRECTED_SINCE`). Se a foto tem orientação a corrigir e a
+/// extração é mais antiga, as coordenadas estão em outro espaço visual: nenhum destaque
+/// é desenhado e o motivo é explicado.
 pub fn load_image(
     format: DocFormat,
     verified_bytes: &[u8],
     page: Option<u32>,
     expected: Option<(u32, u32)>,
+    exif_corrected: bool,
 ) -> Result<VisualImage, String> {
     match format {
         DocFormat::Png => from_png(verified_bytes, expected),
-        DocFormat::Jpeg => from_jpeg(verified_bytes, expected),
+        DocFormat::Jpeg => match crate::orientation::needs_transform(verified_bytes) {
+            None => from_jpeg(verified_bytes, expected),
+            Some(o) if !exif_corrected => Err(format!(
+                "A foto tem orientação EXIF {o} e foi lida pelo OCR antes da correção de orientação; as coordenadas guardadas não correspondem à imagem girada. Reprocesse o documento para gerar a evidência visual."
+            )),
+            Some(_) => from_oriented_jpeg(verified_bytes, expected),
+        },
         DocFormat::Pdf => {
             let page = page.ok_or("Página do PDF não registrada.".to_string())?;
             let pdf = PdfDocument::open(verified_bytes).map_err(|e| e.message)?;
@@ -574,7 +612,7 @@ mod tests {
     fn png_is_decoded_and_alpha_is_composited_on_white() {
         let rgba = [255u8, 0, 0, 255, 0, 0, 255, 0]; // vermelho opaco; azul totalmente transparente
         let bytes = png_bytes(2, 1, png::ColorType::Rgba, &rgba);
-        let img = load_image(DocFormat::Png, &bytes, None, Some((2, 1))).unwrap();
+        let img = load_image(DocFormat::Png, &bytes, None, Some((2, 1)), true).unwrap();
         match img.data {
             ImageData::Raw { data, gray } => {
                 assert!(!gray);
@@ -589,7 +627,7 @@ mod tests {
     #[test]
     fn dimension_mismatch_with_the_ocr_record_disables_the_visual() {
         let bytes = png_bytes(2, 1, png::ColorType::Grayscale, &[0, 255]);
-        assert!(load_image(DocFormat::Png, &bytes, None, Some((3, 1))).is_err());
+        assert!(load_image(DocFormat::Png, &bytes, None, Some((3, 1)), true).is_err());
     }
 
     #[test]
@@ -597,7 +635,7 @@ mod tests {
         let (w, h) = (3200u32, 8u32);
         let data = vec![128u8; (w * h) as usize];
         let bytes = png_bytes(w, h, png::ColorType::Grayscale, &data);
-        let img = load_image(DocFormat::Png, &bytes, None, Some((w, h))).unwrap();
+        let img = load_image(DocFormat::Png, &bytes, None, Some((w, h)), true).unwrap();
         assert_eq!((img.width, img.height), (w, h));
         assert!(!img.notices.is_empty());
         match img.data {
@@ -632,7 +670,7 @@ mod tests {
     #[test]
     fn jpeg_is_passed_through_untouched() {
         let bytes = jpeg_header(300, 200, 3, None);
-        let img = load_image(DocFormat::Jpeg, &bytes, None, Some((300, 200))).unwrap();
+        let img = load_image(DocFormat::Jpeg, &bytes, None, Some((300, 200)), true).unwrap();
         match img.data {
             ImageData::Jpeg { data, gray } => {
                 assert_eq!(data, bytes, "os bytes originais não podem mudar");
@@ -640,18 +678,40 @@ mod tests {
             }
             _ => panic!(),
         }
-        assert!(load_image(DocFormat::Jpeg, &jpeg_header(300, 200, 4, None), None, None).is_err());
+        assert!(load_image(DocFormat::Jpeg, &jpeg_header(300, 200, 4, None), None, None, true).is_err());
+    }
+
+    fn exif_fixture(name: &str) -> Vec<u8> {
+        std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/exif").join(name)).unwrap()
     }
 
     #[test]
-    fn exif_orientation_is_detected_and_reported() {
-        let rotated = jpeg_header(300, 200, 3, Some(6));
-        assert_eq!(jpeg_exif_orientation(&rotated), Some(6));
-        let img = load_image(DocFormat::Jpeg, &rotated, None, Some((300, 200))).unwrap();
-        assert_eq!(img.notices.len(), 1);
-        let upright = jpeg_header(300, 200, 3, Some(1));
-        assert!(load_image(DocFormat::Jpeg, &upright, None, None).unwrap().notices.is_empty());
+    fn exif_orientation_is_detected() {
+        assert_eq!(jpeg_exif_orientation(&jpeg_header(300, 200, 3, Some(6))), Some(6));
         assert_eq!(jpeg_exif_orientation(&jpeg_header(10, 10, 3, None)), None);
+    }
+
+    #[test]
+    fn rotated_photo_is_embedded_upright_and_matches_the_ocr_image_size() {
+        // ori6.jpg guarda 48×64 pixels com EXIF 6; a imagem do OCR/relatório é 64×48.
+        let bytes = exif_fixture("ori6.jpg");
+        let img = load_image(DocFormat::Jpeg, &bytes, None, Some((64, 48)), true).unwrap();
+        assert_eq!((img.width, img.height), (64, 48));
+        assert!(matches!(img.data, ImageData::Raw { gray: false, .. }), "pixels girados, não o JPEG bruto");
+        assert_eq!(img.notices.len(), 1);
+        // Coordenadas calculadas sobre a imagem deitada (48×64) não são aceitas.
+        let err = load_image(DocFormat::Jpeg, &bytes, None, Some((48, 64)), true).unwrap_err();
+        assert!(err.contains("não conferem"), "{err}");
+    }
+
+    #[test]
+    fn extraction_older_than_the_exif_fix_never_gets_a_highlight() {
+        // Orientação 3 mantém as dimensões: sem esta guarda o destaque cairia no lugar errado.
+        let bytes = exif_fixture("ori3.jpg");
+        let err = load_image(DocFormat::Jpeg, &bytes, None, Some((64, 48)), false).unwrap_err();
+        assert!(err.contains("Reprocesse"), "{err}");
+        // Foto sem orientação a corrigir continua passando como antes.
+        assert!(load_image(DocFormat::Jpeg, &exif_fixture("ori1.jpg"), None, Some((64, 48)), false).is_ok());
     }
 
     #[test]
@@ -665,6 +725,6 @@ mod tests {
 
     #[test]
     fn text_documents_have_no_image() {
-        assert!(load_image(DocFormat::Txt, b"x", None, None).is_err());
+        assert!(load_image(DocFormat::Txt, b"x", None, None, true).is_err());
     }
 }

@@ -337,7 +337,12 @@ fn app_sources_and_direct_dependencies_have_no_network_clients() {
         if path.extension().is_none_or(|e| e != "rs") || path.file_name().unwrap() == "security_tests.rs" {
             continue;
         }
-        let text = fs::read_to_string(&path).unwrap();
+        let mut text = fs::read_to_string(&path).unwrap();
+        // Única URL permitida: a de EXIBIÇÃO do modelo (apenas texto mostrado ao usuário).
+        // Nenhum cliente de rede a usa; o aplicativo nunca baixa nada.
+        if path.file_name().unwrap() == "embeddings.rs" {
+            text = text.replace("\"https://huggingface.co/intfloat/multilingual-e5-small\"", "\"<url-de-exibicao>\"");
+        }
         for pattern in &forbidden {
             assert!(!text.contains(pattern), "{:?} contém {pattern:?}", path.file_name().unwrap());
         }

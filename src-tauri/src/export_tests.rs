@@ -63,6 +63,17 @@ impl Env {
         (id, path)
     }
 
+    /// Importa um arquivo binário (PDF etc.) e o processa sem OCR.
+    fn file_bytes(&self, name: &str, body: &[u8], mode: StorageMode) -> (String, PathBuf) {
+        let path = self.src.join(name);
+        fs::write(&path, body).unwrap();
+        let path = dunce::canonicalize(path).unwrap();
+        let result = import_files(&self.project, &[path.clone()], mode).unwrap();
+        let id = result.imported[0].id.clone();
+        self.extract(&id);
+        (id, path)
+    }
+
     fn file(&self, name: &str, body: &str, mode: StorageMode) -> (String, PathBuf) {
         self.file_in("", name, body, mode)
     }
@@ -300,8 +311,13 @@ fn unicode_and_long_segments_are_fully_present_in_the_pdf() {
     for word in unicode.split_whitespace() {
         assert!(text.contains(word), "ausente: {word}");
     }
+    // O trecho longo atravessa a quebra de página: cabeçalho e rodapé ("Página 2 de 3")
+    // ficam entre os pedaços. Por isso a integridade é conferida por contagem de
+    // palavras, não por substring contínua.
     let squash = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
-    assert!(squash(&text).contains(&squash(&long)));
+    let flat = squash(&text);
+    assert_eq!(flat.matches("palavra").count(), 140, "nenhuma palavra do trecho longo foi perdida");
+    assert!(flat.contains("pagamentopalavra"));
 }
 
 #[test]
@@ -741,7 +757,15 @@ use crate::pdf_report::pdf_report_tests::{image_ops, text_ops, yellow_rects};
 
 /// PNG real (branco, com uma barra escura) para servir de captura de tela.
 fn png_file(w: u32, h: u32) -> Vec<u8> {
+    png_file_seeded(w, h, 0)
+}
+
+/// Como `png_file`, mas com o primeiro pixel derivado de `seed`: bytes distintos,
+/// logo hashes distintos (a importação recusa conteúdo idêntico como duplicata).
+fn png_file_seeded(w: u32, h: u32, seed: u32) -> Vec<u8> {
     let mut data = vec![255u8; (w * h * 3) as usize];
+    data[0] = (seed % 200) as u8;
+    data[1] = ((seed / 200) % 200) as u8;
     for y in (h / 3)..(h / 3 + 4) {
         for x in 10..(w - 10) {
             let i = ((y * w + x) * 3) as usize;
@@ -772,7 +796,8 @@ impl Env {
     /// caminho de gravação da extração real (o Tesseract não é necessário).
     fn ocr_image(&self, name: &str, text: &str, words: Vec<WordBox>, bbox: Option<BBox>, confidence: f64) -> (String, i64, PathBuf) {
         let path = self.src.join(name);
-        fs::write(&path, png_file(320, 200)).unwrap();
+        let seed = name.bytes().fold(7u32, |a, b| a.wrapping_mul(31).wrapping_add(b as u32));
+        fs::write(&path, png_file_seeded(320, 200, seed)).unwrap();
         let path = dunce::canonicalize(path).unwrap();
         let imported = import_files(&self.project, &[path.clone()], StorageMode::Reference).unwrap();
         let id = imported.imported[0].id.clone();
@@ -1058,4 +1083,65 @@ fn text_only_exports_keep_working_and_report_zero_visuals() {
     assert!(!has(&text, "sem evidência visual"), "arquivos de texto não geram aviso de imagem");
     assert!(has(&text, "Pesquisa exata (lexical)"));
     assert!(!yellow_rects(&pdf).is_empty(), "o trecho literal está marcado em amarelo");
+}
+
+// --- PDF com texto digital -------------------------------------------------------------
+
+fn manifest_visual(result: &ExportResult) -> serde_json::Value {
+    manifest_of(result)["occurrences"][0]["visualEvidence"].clone()
+}
+
+#[test]
+fn text_pdf_without_the_renderer_keeps_the_text_and_explains_why() {
+    if crate::pdf_visual::is_available() {
+        return; // com o PDFium instalado, o caso coberto é o do teste com o renderizador real
+    }
+    let e = env();
+    let pdf = crate::pdf_visual::tests::text_pdf(&[("Pagamento realizado hoje", 72, 720)], None);
+    let (_, _) = e.file_bytes("digital.pdf", &pdf, StorageMode::Reference);
+    let ids = e.ids("pagamento");
+    assert_eq!(ids.len(), 1);
+    let result = e.export(ids, "pagamento").unwrap();
+    assert_eq!(result.visual_evidence_count, 0);
+    let report = fs::read(Path::new(&result.folder_path).join(REPORT_FILE)).unwrap();
+    assert!(image_ops(&report).is_empty());
+    let text = text_ops(&report).into_iter().map(|o| o.3).collect::<Vec<_>>().join(" ");
+    assert!(has(&text, "PDFium"), "o motivo da ausência de imagem é explicado no relatório");
+    assert!(has(&text, "Pagamento realizado hoje"), "o trecho de texto continua no relatório");
+    let visual = manifest_visual(&result);
+    assert_eq!(visual["included"], false);
+}
+
+#[test]
+#[ignore = "requer a biblioteca PDFium (EVIDENCE_FINDER_PDFIUM)"]
+fn real_pdfium_text_pdf_export_has_a_visual_with_the_yellow_box_on_the_term() {
+    let e = env();
+    let pdf = crate::pdf_visual::tests::text_pdf(&[("Reuniao na quinta", 72, 720), ("Pagamento realizado hoje", 72, 650)], None);
+    let (_, original) = e.file_bytes("digital.pdf", &pdf, StorageMode::Reference);
+    let before = fs::read(&original).unwrap();
+    let ids = e.ids("pagamento");
+    assert_eq!(ids.len(), 1);
+
+    let result = e.export(ids, "pagamento").unwrap();
+    assert_eq!(result.visual_evidence_count, 1, "{:?}", result.warnings);
+    assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+    assert_eq!(fs::read(&original).unwrap(), before, "o PDF original não é alterado");
+
+    let report = fs::read(Path::new(&result.folder_path).join(REPORT_FILE)).unwrap();
+    assert!(lopdf::Document::load_mem(&report).is_ok());
+    assert_eq!(image_ops(&report).len(), 1, "a página renderizada está no relatório");
+    let (image_page, [ix, iy, iw, ih]) = image_ops(&report)[0];
+    let inside: Vec<[f32; 4]> = yellow_rects(&report)
+        .into_iter()
+        .filter(|(page, _)| *page == image_page)
+        .map(|(_, r)| r)
+        .filter(|r| r[0] >= ix - 0.5 && r[1] >= iy - 0.5 && r[0] + r[2] <= ix + iw + 0.5 && r[1] + r[3] <= iy + ih + 0.5)
+        .collect();
+    assert_eq!(inside.len(), 1, "um destaque dentro da imagem: {inside:?}");
+    // "Pagamento" está na linha de base y = 650 de 842 pt: ~23% da altura, de cima para baixo.
+    let r = inside[0];
+    let from_top = (iy + ih - (r[1] + r[3] / 2.0)) / ih;
+    assert!((from_top - (842.0 - 650.0 - 5.0) / 842.0).abs() < 0.03, "posição vertical = {from_top}");
+    let visual = manifest_visual(&result);
+    assert_eq!(visual["included"], true);
 }

@@ -163,6 +163,88 @@ pub fn model_dir(app_data_dir: &Path) -> PathBuf {
     app_data_dir.join("models").join(MODEL_ID)
 }
 
+/// Manifesto (SHA-256 e tamanho de cada arquivo) que acompanha o modelo EMPACOTADO no
+/// instalador. Gerado em `scripts/preparar-distribuicao.ps1`.
+pub const MANIFEST_FILE: &str = "MODEL-MANIFEST.json";
+
+/// Pasta do modelo incluído na instalação: `<pasta do executável>/models/<id>`.
+pub fn bundled_model_dir() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    Some(exe.parent()?.join("models").join(MODEL_ID))
+}
+
+fn has_all_files(dir: &Path) -> bool {
+    MODEL_FILES.iter().all(|f| dir.join(f).is_file())
+}
+
+/// Escolhe onde ler o modelo. A cópia do usuário (`%APPDATA%`) tem precedência: se já está
+/// completa, nada é usado do instalador nem baixado de novo. Sem ela, usa o modelo
+/// empacotado, se completo. Sem nenhum dos dois, devolve a pasta do usuário, que é onde
+/// `scripts/instalar-modelo.ps1` instala.
+pub fn resolve_model_dir(app_data_dir: &Path, bundled: Option<PathBuf>) -> PathBuf {
+    let user = model_dir(app_data_dir);
+    if has_all_files(&user) {
+        return user;
+    }
+    match bundled {
+        Some(b) if has_all_files(&b) => b,
+        _ => user,
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct ManifestEntry {
+    sha256: String,
+    size: u64,
+}
+
+#[derive(serde::Deserialize)]
+struct Manifest {
+    files: std::collections::BTreeMap<String, ManifestEntry>,
+}
+
+fn sha256_of_file(path: &Path) -> std::io::Result<String> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 1 << 20];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// Confere os arquivos do modelo contra o manifesto empacotado. `Ok(false)` se a pasta não
+/// tem manifesto (modelo instalado pelo script, já conferido no download); `Ok(true)` se
+/// tinha e tudo confere; erro se algo estiver corrompido, alterado ou fora do manifesto.
+/// Detecta corrupção e alteração acidental; não é assinatura digital.
+pub fn verify_manifest(dir: &Path) -> Result<bool, AppError> {
+    let path = dir.join(MANIFEST_FILE);
+    if !path.is_file() {
+        return Ok(false);
+    }
+    let bad = |m: &str| unavailable(format!("O modelo incluído na instalação está inválido: {m} Reinstale o aplicativo."));
+    let text = std::fs::read_to_string(&path).map_err(|_| bad("manifesto ilegível."))?;
+    let manifest: Manifest = serde_json::from_str(&text).map_err(|_| bad("manifesto malformado."))?;
+    for name in MODEL_FILES {
+        let entry = manifest.files.get(name).ok_or_else(|| bad(&format!("{name} não consta no manifesto.")))?;
+        let file = dir.join(name);
+        let size = std::fs::metadata(&file).map_err(|_| bad(&format!("{name} ausente.")))?.len();
+        if size != entry.size {
+            return Err(bad(&format!("{name} tem tamanho diferente do esperado.")));
+        }
+        let actual = sha256_of_file(&file).map_err(|_| bad(&format!("{name} ilegível.")))?;
+        if !actual.eq_ignore_ascii_case(&entry.sha256) {
+            return Err(bad(&format!("{name} falhou na conferência SHA-256.")));
+        }
+    }
+    Ok(true)
+}
+
 /// Mantém o modelo carregado (carregar leva segundos e centenas de MB).
 pub struct ModelManager {
     dir: PathBuf,
@@ -172,12 +254,6 @@ pub struct ModelManager {
 impl ModelManager {
     pub fn new(dir: PathBuf) -> Self {
         Self { dir, cached: Mutex::new(None) }
-    }
-
-    /// Gerenciador com um gerador já pronto (testes).
-    #[cfg(test)]
-    pub(crate) fn with_embedder(dir: PathBuf, embedder: Arc<dyn Embedder>) -> Self {
-        Self { dir, cached: Mutex::new(Some(embedder)) }
     }
 
     fn missing_files(&self) -> Vec<String> {
@@ -241,6 +317,8 @@ impl ModelManager {
                 message.unwrap_or_else(|| "Busca semântica indisponível.".to_string()),
             ));
         }
+        // Modelo incluído no instalador: confere a integridade antes de carregar.
+        verify_manifest(&self.dir)?;
         let loaded = load_local(&self.dir)?;
         *cached = Some(Arc::clone(&loaded));
         Ok(loaded)
@@ -268,7 +346,7 @@ impl ModelManager {
 }
 
 #[cfg(feature = "semantic-model")]
-fn load_local(dir: &Path) -> Result<Arc<dyn Embedder>, AppError> {
+pub(crate) fn load_local(dir: &Path) -> Result<Arc<dyn Embedder>, AppError> {
     let e = candle_backend::CandleEmbedder::load(dir)?;
     Ok(Arc::new(e))
 }
@@ -527,5 +605,98 @@ mod tests {
         let manager = ModelManager::new(dir.path().to_path_buf());
         let err = manager.get().unwrap_err();
         assert_eq!(err.code, ErrorCode::SemanticUnavailable);
+    }
+
+    // --- modelo empacotado no instalador ----------------------------------------
+
+    fn write_model(dir: &Path) {
+        std::fs::create_dir_all(dir).unwrap();
+        for (i, f) in MODEL_FILES.iter().enumerate() {
+            std::fs::write(dir.join(f), format!("conteudo {i} de {f}")).unwrap();
+        }
+    }
+
+    fn write_manifest(dir: &Path) {
+        let entries: Vec<String> = MODEL_FILES
+            .iter()
+            .map(|f| {
+                let path = dir.join(f);
+                format!(
+                    "\"{f}\":{{\"sha256\":\"{}\",\"size\":{}}}",
+                    sha256_of_file(&path).unwrap(),
+                    std::fs::metadata(&path).unwrap().len()
+                )
+            })
+            .collect();
+        std::fs::write(dir.join(MANIFEST_FILE), format!("{{\"files\":{{{}}}}}", entries.join(","))).unwrap();
+    }
+
+    #[test]
+    fn user_model_wins_then_bundled_then_user_dir_is_the_install_target() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = tmp.path().join("appdata");
+        let bundled = tmp.path().join("install").join("models").join(MODEL_ID);
+
+        // Nenhum dos dois: aponta para a pasta do usuário (onde o script instala).
+        assert_eq!(resolve_model_dir(&app, Some(bundled.clone())), model_dir(&app));
+        // Só o empacotado, completo: usa o empacotado (sem copiar nem baixar).
+        write_model(&bundled);
+        assert_eq!(resolve_model_dir(&app, Some(bundled.clone())), bundled);
+        // O do usuário, completo, tem precedência.
+        write_model(&model_dir(&app));
+        assert_eq!(resolve_model_dir(&app, Some(bundled.clone())), model_dir(&app));
+        // Empacotado incompleto é ignorado.
+        std::fs::remove_dir_all(model_dir(&app)).unwrap();
+        std::fs::remove_file(bundled.join("model.safetensors")).unwrap();
+        assert_eq!(resolve_model_dir(&app, Some(bundled)), model_dir(&app));
+    }
+
+    #[test]
+    fn manifest_accepts_intact_files_and_rejects_any_change() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("m");
+        write_model(&dir);
+        assert!(!verify_manifest(&dir).unwrap(), "sem manifesto: nada a conferir");
+        write_manifest(&dir);
+        assert!(verify_manifest(&dir).unwrap());
+
+        // Mesmo tamanho, conteúdo diferente: só o SHA-256 pega.
+        let target = dir.join("tokenizer.json");
+        let mut bytes = std::fs::read(&target).unwrap();
+        bytes[0] ^= 0x01;
+        std::fs::write(&target, &bytes).unwrap();
+        let err = verify_manifest(&dir).unwrap_err();
+        assert!(err.message.contains("SHA-256"), "{}", err.message);
+
+        // Tamanho diferente.
+        std::fs::write(&target, b"curto").unwrap();
+        assert!(verify_manifest(&dir).unwrap_err().message.contains("tamanho"));
+    }
+
+    #[test]
+    fn manifest_that_omits_a_required_file_or_is_malformed_is_an_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("m");
+        write_model(&dir);
+        std::fs::write(dir.join(MANIFEST_FILE), "{\"files\":{}}").unwrap();
+        assert!(verify_manifest(&dir).is_err(), "manifesto incompleto não vale");
+        std::fs::write(dir.join(MANIFEST_FILE), "isto não é json").unwrap();
+        assert!(verify_manifest(&dir).is_err());
+    }
+
+    #[test]
+    fn corrupted_bundled_model_is_refused_before_loading() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("m");
+        write_model(&dir);
+        write_manifest(&dir);
+        std::fs::write(dir.join("config.json"), b"adulterado").unwrap();
+        let manager = ModelManager::new(dir);
+        let err = manager.get().err().expect("deve recusar");
+        assert!(
+            err.message.contains("inválido") || err.message.contains("compilada"),
+            "{}",
+            err.message
+        );
     }
 }

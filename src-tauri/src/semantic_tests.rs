@@ -150,7 +150,8 @@ fn unchanged_content_is_not_embedded_again() {
     assert_eq!((again.total, again.generated), (0, 0), "nada novo a indexar");
 
     // Mesmo texto em outro documento: o vetor é reaproveitado, não recalculado.
-    e.text("copia", "Recebi o comprovante da transferencia ontem.");
+    // Quebra de linha final: arquivo diferente (hash), mesmo trecho.
+    e.text("copia", "Recebi o comprovante da transferencia ontem.\n");
     let r = e.index();
     assert_eq!((r.total, r.generated, r.reused), (1, 0, 1));
     assert_eq!(e.embedding_rows(), (4, 3), "quatro trechos, três vetores distintos");
