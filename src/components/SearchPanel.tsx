@@ -35,6 +35,7 @@ import { core, normalizeError } from "../services/core";
 import type { DocFormat, DocumentInfo, SearchHit, SearchSort } from "../types/contracts";
 import { ContextDialog } from "./ContextDialog";
 import { ExportDialog } from "./ExportDialog";
+import { Icon } from "./Icon";
 import { SearchResultCard } from "./SearchResultCard";
 import type { Notice } from "./StatusMessage";
 
@@ -160,9 +161,10 @@ export function SearchPanel({
     <div className="docs__header">
       <div>
         <h2 id="search-title" className="section-title">
-          Pesquisar em “{projectName}”
+          <Icon name="search" size={15} />
+          <span>Pesquisa Forense em “{projectName}”</span>
         </h2>
-        <p className="muted small">Busca local nos textos extraídos. Nada sai do seu computador.</p>
+        <p className="muted small">Busca de alta precisão nos textos e transcrições OCR locais. 100% offline.</p>
       </div>
     </div>
   );
@@ -172,43 +174,56 @@ export function SearchPanel({
     return (
       <section className="search" aria-labelledby="search-title">
         {heading}
-        <p className="muted" role="status">
-          Carregando…
-        </p>
+        <div className="empty" role="status">
+          <div className="empty__icon">
+            <Icon name="refresh" size={20} />
+          </div>
+          <p className="muted">Carregando índice de documentos…</p>
+        </div>
       </section>
     );
   }
+
   if (documents.length === 0) {
     return (
       <section className="search" aria-labelledby="search-title">
         {heading}
         <div className="empty">
-          <p>Este projeto ainda não tem documentos.</p>
-          <p className="muted">Importe arquivos ou cole um texto para poder pesquisar.</p>
-          <button type="button" className="btn btn--primary" onClick={onGoToDocuments}>
-            Ir para Documentos
+          <div className="empty__icon">
+            <Icon name="folder" size={22} />
+          </div>
+          <p><strong>Este projeto ainda não possui documentos</strong></p>
+          <p className="muted small">Importe imagens, PDFs ou textos para habilitar a busca inteligente e OCR.</p>
+          <button type="button" className="btn btn--primary" onClick={onGoToDocuments} style={{ marginTop: "6px" }}>
+            <Icon name="plus" size={14} />
+            <span>Ir para Documentos</span>
           </button>
         </div>
       </section>
     );
   }
+
   if (index.withText.length === 0) {
     const reason =
       index.processing > 0
-        ? "A extração de texto está em andamento. Os resultados ficam disponíveis assim que ela terminar."
+        ? "A extração de texto está em andamento no momento. Os trechos ficarão pesquisáveis assim que ela terminar."
         : index.waiting > 0
-          ? "Os documentos ainda não tiveram o texto extraído. Processe-os na aba Documentos."
+          ? "Os documentos importados ainda não tiveram o texto extraído. Processe-os na aba Documentos."
           : index.failed > 0
-            ? "A extração falhou em todos os documentos. Veja os detalhes e tente novamente na aba Documentos."
-            : "Nenhum texto foi encontrado nos documentos importados (por exemplo, imagens sem texto legível).";
+            ? "A extração falhou em todos os documentos. Verifique os detalhes e tente novamente na aba Documentos."
+            : "Nenhum texto legível foi encontrado nos documentos importados (por exemplo, imagens sem texto).";
     return (
       <section className="search" aria-labelledby="search-title">
         {heading}
         <div className="empty">
-          <p>Ainda não há texto para pesquisar.</p>
-          <p className="muted">{reason}</p>
-          <button type="button" className="btn" onClick={onGoToDocuments}>
-            Ir para Documentos
+          <div className="empty__icon">
+            <Icon name="alert-triangle" size={22} />
+          </div>
+          <p><strong>Ainda não há conteúdo indexado para pesquisa</strong></p>
+          <p className="muted small">{reason}</p>
+          <button type="button" className="btn btn--primary" onClick={onGoToDocuments} style={{ marginTop: "6px" }}>
+            <Icon name="layers" size={14} />
+            <span>Gerenciar Documentos</span>
           </button>
         </div>
       </section>
@@ -233,7 +248,7 @@ export function SearchPanel({
       />
 
       <fieldset className="modes">
-        <legend>Modalidade</legend>
+        <legend>Modalidade de Busca</legend>
         {(Object.keys(MODE_LABEL) as SearchMode[]).map((mode) => {
           const usable = modeUsable(mode, semantic.status);
           return (
@@ -249,7 +264,10 @@ export function SearchPanel({
                   change({ mode });
                 }}
               />
-              {MODE_LABEL[mode]}
+              {mode === "semantic" || mode === "hybrid" ? (
+                <Icon name="sparkles" size={13} style={{ marginRight: "2px" }} />
+              ) : null}
+              <span>{MODE_LABEL[mode]}</span>
             </label>
           );
         })}
@@ -260,7 +278,7 @@ export function SearchPanel({
 
       <form className="searchbar" onSubmit={submit} role="search" aria-label="Pesquisar nos documentos">
         <label className="field searchbar__field">
-          <span className="field__label">Consulta</span>
+          <span className="field__label">Termo ou expressão investigativa</span>
           <input
             type="search"
             className="field__input"
@@ -274,24 +292,40 @@ export function SearchPanel({
           />
         </label>
         <button type="submit" className="btn btn--primary" disabled={state.status === "loading"}>
-          {state.status === "loading" ? "Pesquisando…" : "Pesquisar"}
+          <Icon name="search" size={15} />
+          <span>{state.status === "loading" ? "Pesquisando…" : "Pesquisar"}</span>
         </button>
-        <button type="button" className="btn" onClick={clearAll} disabled={form.query === "" && !filtersOn && committed === null}>
-          Limpar tudo
+        <button
+          type="button"
+          className="btn"
+          onClick={clearAll}
+          disabled={form.query === "" && !filtersOn && committed === null}
+        >
+          <Icon name="x" size={14} />
+          <span>Limpar</span>
         </button>
       </form>
+
       <p id="search-help" className={formError ? "field__help field__help--error" : "field__help"} role={formError ? "alert" : undefined}>
-        {formError ??
-          'Várias palavras: todas precisam aparecer no mesmo trecho. Use aspas para uma expressão exata. Maiúsculas e acentos são ignorados.'}
+        {formError ? (
+          <>
+            <Icon name="alert-circle" size={14} style={{ marginRight: "4px" }} />
+            <span>{formError}</span>
+          </>
+        ) : (
+          'Dica: Múltiplas palavras exigem correspondência na mesma passagem. Use aspas para frases literais exatas. Diacríticos e maiúsculas são normalizados automaticamente.'
+        )}
       </p>
 
       <details className="filters" open={filtersOn || undefined}>
         <summary>
-          Filtros{filtersOn ? " (ativos)" : ""} e ordenação
+          <Icon name="filter" size={15} />
+          <span>Filtros investigativos e ordenação</span>
+          {filtersOn ? <span className="badge badge--ok">Ativos</span> : null}
         </summary>
         <div className="filters__grid">
           <fieldset className="filters__group">
-            <legend>Formato</legend>
+            <legend>Formato de documento</legend>
             {SEARCH_FORMATS.map((format: DocFormat) => (
               <label key={format} className="check">
                 <input
@@ -299,7 +333,7 @@ export function SearchPanel({
                   checked={form.formats.includes(format)}
                   onChange={() => change({ formats: toggle(form.formats, format) })}
                 />
-                {FORMAT_LABEL[format]}
+                <span>{FORMAT_LABEL[format]}</span>
               </label>
             ))}
           </fieldset>
@@ -307,7 +341,7 @@ export function SearchPanel({
           <fieldset className="filters__group">
             <legend>Período de importação</legend>
             <label className="field">
-              <span className="field__help">De</span>
+              <span className="field__help">Data inicial</span>
               <input
                 type="date"
                 className="field__input"
@@ -316,7 +350,7 @@ export function SearchPanel({
               />
             </label>
             <label className="field">
-              <span className="field__help">Até</span>
+              <span className="field__help">Data final</span>
               <input
                 type="date"
                 className="field__input"
@@ -324,12 +358,12 @@ export function SearchPanel({
                 onChange={(e) => change({ dateTo: e.target.value })}
               />
             </label>
-            <p className="field__help">É a data em que o arquivo foi importado, não a data do conteúdo.</p>
+            <p className="field__help">Filtra pelo registro no projeto, preservando a cronologia da perícia.</p>
           </fieldset>
 
           <fieldset className="filters__group filters__group--docs">
             <legend>
-              Documentos{form.documentIds.length > 0 ? ` (${form.documentIds.length} selecionados)` : " (todos)"}
+              Documentos específicos{form.documentIds.length > 0 ? ` (${form.documentIds.length} selecionados)` : " (todos)"}
             </legend>
             <div className="filters__docs">
               {index.withText.map((doc) => (
@@ -346,7 +380,7 @@ export function SearchPanel({
           </fieldset>
 
           <label className="field">
-            <span className="field__label">Ordenar por</span>
+            <span className="field__label">Critério de ordenação</span>
             <select
               className="field__input"
               value={form.sort}
@@ -360,22 +394,26 @@ export function SearchPanel({
             </select>
           </label>
         </div>
-        <button
-          type="button"
-          className="btn btn--small"
-          onClick={() => change(clearFilters(form))}
-          disabled={!filtersOn}
-        >
-          Remover filtros
-        </button>
+        <div style={{ marginTop: "10px" }}>
+          <button
+            type="button"
+            className="btn btn--small"
+            onClick={() => change(clearFilters(form))}
+            disabled={!filtersOn}
+          >
+            <Icon name="x" size={13} />
+            <span>Remover filtros</span>
+          </button>
+        </div>
       </details>
 
       {incomplete > 0 ? (
         <p className="small extract__warn" role="status">
+          <Icon name="alert-triangle" size={14} style={{ marginRight: "4px" }} />
           {index.processing > 0 ? `${plural(index.processing, "documento está", "documentos estão")} sendo processado${index.processing === 1 ? "" : "s"}. ` : ""}
           {index.waiting > 0 ? `${plural(index.waiting, "documento aguarda", "documentos aguardam")} extração. ` : ""}
           {index.failed > 0 ? `${plural(index.failed, "documento falhou", "documentos falharam")} na extração. ` : ""}
-          Eles não aparecem nos resultados até que o texto seja extraído.{" "}
+          Documentos pendentes não entram nos resultados.{" "}
           <button type="button" className="btn btn--small btn--quiet" onClick={onGoToDocuments}>
             Ver documentos
           </button>
@@ -384,28 +422,51 @@ export function SearchPanel({
 
       {state.status === "done" && state.notice ? (
         <p className="small extract__warn" role="status">
+          <Icon name="info" size={14} style={{ marginRight: "4px" }} />
           {state.notice}
         </p>
       ) : null}
 
       <div className="results" aria-live="polite" aria-busy={state.status === "loading"}>
         {state.status === "idle" ? (
-          <p className="muted">
-            {plural(index.withText.length, "documento pesquisável", "documentos pesquisáveis")}. Digite uma consulta e
-            pressione Pesquisar.
-          </p>
+          <div className="empty">
+            <div className="empty__icon">
+              <Icon name="search" size={22} />
+            </div>
+            <p><strong>Pronto para pesquisar</strong></p>
+            <p className="muted small">
+              {plural(index.withText.length, "documento indexado e pesquisável", "documentos indexados e pesquisáveis")}.
+              Digite sua consulta acima e clique em Pesquisar.
+            </p>
+          </div>
         ) : null}
 
-        {state.status === "loading" ? <p role="status">Pesquisando…</p> : null}
+        {state.status === "loading" ? (
+          <div className="empty" role="status">
+            <div className="empty__icon">
+              <Icon name="refresh" size={22} />
+            </div>
+            <p className="muted">Analisando índices FTS5 e vetores semânticos…</p>
+          </div>
+        ) : null}
 
         {state.status === "error" && state.error ? (
           <div className="empty" role="alert">
+            <div className="empty__icon">
+              <Icon name="alert-triangle" size={22} />
+            </div>
             <p className="extract__error">{state.error.message}</p>
             {state.error.code === "INVALID_QUERY" ? (
-              <p className="muted small">Ajuste a consulta e pesquise novamente.</p>
+              <p className="muted small">Ajuste os termos ou aspas e execute a pesquisa novamente.</p>
             ) : (
-              <button type="button" className="btn" onClick={() => committed !== null && execute(form, committed)}>
-                Tentar novamente
+              <button
+                type="button"
+                className="btn btn--small"
+                onClick={() => committed !== null && execute(form, committed)}
+                style={{ marginTop: "6px" }}
+              >
+                <Icon name="refresh" size={14} />
+                <span>Tentar novamente</span>
               </button>
             )}
           </div>
@@ -414,36 +475,49 @@ export function SearchPanel({
         {state.status === "done" ? (
           state.total === 0 ? (
             <div className="empty">
-              <p>Nenhum resultado para “{committed}”{filtersOn ? " com os filtros selecionados" : ""}.</p>
+              <div className="empty__icon">
+                <Icon name="search" size={22} />
+              </div>
+              <p><strong>Nenhum resultado encontrado para “{committed}”</strong>{filtersOn ? " com os filtros ativos" : ""}.</p>
               <p className="muted small">
-                Verifique a grafia, use menos palavras ou
-                {filtersOn ? " remova os filtros." : " confira se a extração de todos os documentos terminou."}
+                Verifique a grafia, reduza os termos ou
+                {filtersOn ? " limpe os filtros para ampliar o escopo." : " confirme se todos os documentos foram extraídos."}
               </p>
               {filtersOn ? (
-                <button type="button" className="btn btn--small" onClick={() => change(clearFilters(form))}>
-                  Remover filtros
+                <button type="button" className="btn btn--small" onClick={() => change(clearFilters(form))} style={{ marginTop: "6px" }}>
+                  <Icon name="x" size={13} />
+                  <span>Remover filtros</span>
                 </button>
               ) : null}
             </div>
           ) : (
             <>
-              <p className="small">
-                <strong>{plural(state.total, "resultado", "resultados")}</strong> em{" "}
-                {plural(state.documentCount, "documento", "documentos")}
-                {state.hasMore ? ` — mostrando ${state.results.length.toLocaleString("pt-BR")}` : ""}.
-              </p>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
+                <p className="small">
+                  <strong>{plural(state.total, "ocorrência encontrada", "ocorrências encontradas")}</strong> em{" "}
+                  {plural(state.documentCount, "documento", "documentos")}
+                  {state.hasMore ? ` — exibindo as primeiras ${state.results.length.toLocaleString("pt-BR")}` : ""}.
+                </p>
+                <span className="badge">
+                  Modalidade: {MODE_LABEL[state.mode]}
+                </span>
+              </div>
+
               {selection.discarded > 0 ? (
                 <p className="small extract__warn" role="status">
+                  <Icon name="info" size={14} style={{ marginRight: "4px" }} />
                   {discardedNotice(selection.discarded)}{" "}
                   <button type="button" className="btn btn--small btn--quiet" onClick={() => dispatchSelection({ type: "dismissNotice" })}>
                     Entendi
                   </button>
                 </p>
               ) : null}
+
               <div className="exportbar" role="group" aria-label="Seleção para exportação">
                 <span className="small" aria-live="polite">
+                  <Icon name="check" size={15} style={{ marginRight: "6px" }} />
                   <strong>{plural(selection.items.length, "resultado selecionado", "resultados selecionados")}</strong>
-                  {selection.limitReached ? ` — limite de ${MAX_EXPORT_SELECTION} por exportação` : ""}
+                  {selection.limitReached ? ` (limite de ${MAX_EXPORT_SELECTION} por lote)` : ""}
                 </span>
                 <button
                   type="button"
@@ -451,7 +525,7 @@ export function SearchPanel({
                   onClick={() => dispatchSelection({ type: "selectMany", hits: state.results })}
                   disabled={unselected(selection, state.results).length === 0}
                 >
-                  Selecionar os {state.results.length.toLocaleString("pt-BR")} exibidos
+                  <span>Selecionar todos ({state.results.length.toLocaleString("pt-BR")})</span>
                 </button>
                 <button
                   type="button"
@@ -459,7 +533,7 @@ export function SearchPanel({
                   onClick={() => dispatchSelection({ type: "clear" })}
                   disabled={selection.items.length === 0}
                 >
-                  Limpar seleção
+                  <span>Limpar seleção</span>
                 </button>
                 <button
                   type="button"
@@ -467,9 +541,11 @@ export function SearchPanel({
                   onClick={() => setExportOpen(true)}
                   disabled={!canReview(selection)}
                 >
-                  Revisar e exportar
+                  <Icon name="download" size={14} />
+                  <span>Revisar e exportar</span>
                 </button>
               </div>
+
               <ul className="hits">
                 {state.results.map((hit) => (
                   <SearchResultCard
@@ -484,15 +560,19 @@ export function SearchPanel({
                   />
                 ))}
               </ul>
+
               {state.hasMore ? (
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={() => committed !== null && execute(form, committed, state.results.length)}
-                  disabled={state.appending}
-                >
-                  {state.appending ? "Carregando…" : "Mostrar mais resultados"}
-                </button>
+                <div style={{ textAlign: "center", padding: "12px 0" }}>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => committed !== null && execute(form, committed, state.results.length)}
+                    disabled={state.appending}
+                  >
+                    <Icon name="chevron-down" size={15} />
+                    <span>{state.appending ? "Carregando…" : "Mostrar mais resultados"}</span>
+                  </button>
+                </div>
               ) : null}
             </>
           )
@@ -512,8 +592,8 @@ export function SearchPanel({
             kind: warnings > 0 ? "warning" : "success",
             text:
               warnings > 0
-                ? `Exportação criada em "${folderName}" com ${warnings} aviso(s): algumas fontes não foram incluídas.`
-                : `Exportação concluída: pasta "${folderName}".`,
+                ? `Exportação gerada em "${folderName}" com ${warnings} aviso(s): algumas fontes não puderam ser copiadas.`
+                : `Exportação concluída com sucesso: pasta "${folderName}".`,
           })
         }
       />

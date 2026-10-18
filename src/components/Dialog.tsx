@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { ReactNode } from "react";
+import { Icon } from "./Icon";
 
 interface DialogProps {
   open: boolean;
@@ -34,9 +35,19 @@ export function Dialog({ open, title, onClose, wide = false, children }: DialogP
     >
       {open ? (
         <div className="dialog__body">
-          <h2 id="dialog-title" className="dialog__title">
-            {title}
-          </h2>
+          <div className="dialog__header">
+            <h2 id="dialog-title" className="dialog__title">
+              {title}
+            </h2>
+            <button
+              type="button"
+              className="btn btn--quiet btn--small"
+              onClick={onClose}
+              aria-label="Fechar diálogo"
+            >
+              <Icon name="x" size={16} />
+            </button>
+          </div>
           {children}
         </div>
       ) : null}

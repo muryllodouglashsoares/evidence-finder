@@ -1,5 +1,6 @@
 import type { ImportResult } from "../types/contracts";
 import { Dialog } from "./Dialog";
+import { Icon } from "./Icon";
 
 interface ImportResultDialogProps {
   result: ImportResult | null;
@@ -11,24 +12,26 @@ export function ImportResultDialog({ result, onClose }: ImportResultDialogProps)
     <Dialog open={result !== null} title="Resultado da importação" onClose={onClose} wide>
       {result ? (
         <div className="dialog__content">
-          <p>
-            <strong>{result.imported.length}</strong>{" "}
-            {result.imported.length === 1 ? "documento importado" : "documentos importados"}.
-          </p>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <span className="badge badge--ok">
+              <Icon name="check" size={13} />
+              <span>{result.imported.length} {result.imported.length === 1 ? "documento importado" : "documentos importados"}</span>
+            </span>
+          </div>
 
           {result.duplicates.length > 0 ? (
             <section aria-labelledby="dup-title">
-              <h3 id="dup-title" className="result__title">
-                Duplicatas ignoradas ({result.duplicates.length})
+              <h3 id="dup-title" className="result__title" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                <Icon name="copy" size={15} />
+                <span>Duplicatas já existentes ({result.duplicates.length})</span>
               </h3>
               <p className="muted small">
-                O conteúdo é idêntico ao de um documento que já está no projeto (mesmo SHA-256).
-                Nada foi duplicado nem sobrescrito.
+                O conteúdo é idêntico ao de um documento já indexado no projeto (mesmo SHA-256). Nada foi duplicado.
               </p>
               <ul className="result__list">
                 {result.duplicates.map((d, i) => (
                   <li key={`${d.name}-${i}`}>
-                    <strong>{d.name}</strong> — igual a <em>{d.existingName}</em>
+                    <strong>{d.name}</strong> — correspondente a <em>{d.existingName}</em>
                   </li>
                 ))}
               </ul>
@@ -37,10 +40,11 @@ export function ImportResultDialog({ result, onClose }: ImportResultDialogProps)
 
           {result.failed.length > 0 ? (
             <section aria-labelledby="fail-title">
-              <h3 id="fail-title" className="result__title">
-                Arquivos que não puderam ser importados ({result.failed.length})
+              <h3 id="fail-title" className="result__title" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                <Icon name="alert-triangle" size={15} />
+                <span className="extract__error">Arquivos com falha ({result.failed.length})</span>
               </h3>
-              <p className="muted small">Os demais arquivos foram importados normalmente.</p>
+              <p className="muted small">Os demais arquivos válidos foram importados normalmente.</p>
               <ul className="result__list">
                 {result.failed.map((f, i) => (
                   <li key={`${f.name}-${i}`}>
@@ -54,7 +58,7 @@ export function ImportResultDialog({ result, onClose }: ImportResultDialogProps)
       ) : null}
       <div className="dialog__actions">
         <button type="button" className="btn btn--primary" onClick={onClose} autoFocus>
-          Fechar
+          <span>Concluir</span>
         </button>
       </div>
     </Dialog>

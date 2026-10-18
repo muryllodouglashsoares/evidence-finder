@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { DocumentsHook } from "../hooks/useDocuments";
 import { useExtraction } from "../hooks/useExtraction";
 import {
@@ -24,6 +24,7 @@ import {
 import { formatBytes, formatDateTime } from "../lib/format";
 import { core, normalizeError } from "../services/core";
 import type {
+  DocFormat,
   DocumentInfo,
   ExtractionProgress,
   ImportResult,
@@ -32,6 +33,8 @@ import type {
 } from "../types/contracts";
 import { AddTextDialog } from "./AddTextDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { Icon } from "./Icon";
+import type { IconName } from "./Icon";
 import { ImportDialog } from "./ImportDialog";
 import { ImportResultDialog } from "./ImportResultDialog";
 import type { Notice } from "./StatusMessage";
@@ -43,8 +46,23 @@ interface DocumentsPanelProps {
   onNotice: (notice: Notice | null) => void;
 }
 
+function getFormatIcon(format: DocFormat): IconName {
+  switch (format) {
+    case "pdf":
+      return "file-pdf";
+    case "png":
+    case "jpeg":
+      return "file-image";
+    case "txt":
+      return "file-text";
+    default:
+      return "file";
+  }
+}
+
 export function DocumentsPanel({ projectId, docs, onNotice }: DocumentsPanelProps) {
   const { documents, limit, loading, error, refresh } = docs;
+  const [filterQuery, setFilterQuery] = useState("");
   const [picking, setPicking] = useState(false);
   const [picked, setPicked] = useState<PickedFiles | null>(null);
   const [importing, setImporting] = useState(false);
@@ -78,6 +96,12 @@ export function DocumentsPanel({ projectId, docs, onNotice }: DocumentsPanelProp
   const full = remaining === 0;
   const fullReason = full ? `O projeto atingiu o limite de ${limit} documentos.` : null;
   const busy = picking || importing || savingText || removing || verifyingId !== null;
+
+  const filteredDocuments = useMemo(() => {
+    if (!filterQuery.trim()) return documents;
+    const q = filterQuery.toLowerCase();
+    return documents.filter((d) => d.name.toLowerCase().includes(q));
+  }, [documents, filterQuery]);
 
   function report(importResult: ImportResult) {
     onNotice(summarizeImport(importResult));
@@ -144,7 +168,7 @@ export function DocumentsPanel({ projectId, docs, onNotice }: DocumentsPanelProp
       const checked = await core.verifyDocument(projectId, doc.id);
       onNotice(
         checked.availability === "available"
-          ? { kind: "success", text: `"${doc.name}": o conteúdo confere com o registro.` }
+          ? { kind: "success", text: `"${doc.name}": integridade verificada, hash SHA-256 confere.` }
           : { kind: "warning", text: `"${doc.name}": ${AVAILABILITY_LABEL[checked.availability].toLowerCase()}.` },
       );
     } catch (e) {
@@ -179,13 +203,15 @@ export function DocumentsPanel({ projectId, docs, onNotice }: DocumentsPanelProp
       <div className="docs__header">
         <div>
           <h2 id="docs-title" className="section-title">
-            Documentos
+            <Icon name="layers" size={15} />
+            <span>Documentos e Evidências</span>
           </h2>
           <p className="muted small" aria-live="polite">
-            {loading ? "Carregando…" : `${documents.length} de ${limit} documentos`}
+            {loading ? "Carregando…" : `${documents.length} de ${limit} documentos cadastrados`}
           </p>
         </div>
-        <div className="actions">
+
+        <div className="docs__toolbar">
           <button
             type="button"
             className="btn btn--primary"
@@ -193,7 +219,8 @@ export function DocumentsPanel({ projectId, docs, onNotice }: DocumentsPanelProp
             disabled={busy || full || loading}
             title={fullReason ?? undefined}
           >
-            {picking ? "Abrindo…" : "Importar arquivos…"}
+            <Icon name="plus" size={15} />
+            <span>{picking ? "Abrindo…" : "Importar arquivos…"}</span>
           </button>
           <button
             type="button"
@@ -206,7 +233,8 @@ export function DocumentsPanel({ projectId, docs, onNotice }: DocumentsPanelProp
             disabled={busy || full || loading}
             title={fullReason ?? undefined}
           >
-            Adicionar texto…
+            <Icon name="file-text" size={15} />
+            <span>Adicionar texto…</span>
           </button>
         </div>
       </div>
@@ -219,16 +247,17 @@ export function DocumentsPanel({ projectId, docs, onNotice }: DocumentsPanelProp
                 ? progressLabel(progress)
                 : pending.length > 0
                   ? `${pending.length} ${pending.length === 1 ? "documento aguarda" : "documentos aguardam"} extração de texto.`
-                  : "Extração de texto em dia."}
+                  : "Todos os documentos estão com a extração de texto em dia."}
             </p>
             <div className="actions">
               <button
                 type="button"
-                className="btn btn--small"
+                className="btn btn--small btn--primary"
                 onClick={() => void start()}
                 disabled={running || pending.length === 0}
               >
-                Processar pendentes
+                <Icon name="refresh" size={13} />
+                <span>Processar pendentes</span>
               </button>
               {failed.length > 0 ? (
                 <button
@@ -237,7 +266,8 @@ export function DocumentsPanel({ projectId, docs, onNotice }: DocumentsPanelProp
                   onClick={() => void start(failed)}
                   disabled={running}
                 >
-                  Tentar falhas novamente ({failed.length})
+                  <Icon name="alert-triangle" size={13} />
+                  <span>Tentar falhas ({failed.length})</span>
                 </button>
               ) : null}
             </div>
@@ -252,11 +282,13 @@ export function DocumentsPanel({ projectId, docs, onNotice }: DocumentsPanelProp
           ) : null}
           {extractionError ? (
             <p className="small extract__error" role="alert">
+              <Icon name="alert-circle" size={14} style={{ marginRight: "4px" }} />
               {extractionError}
             </p>
           ) : null}
           {ocrMissing ? (
             <p className="small extract__warn" role="status">
+              <Icon name="alert-triangle" size={14} style={{ marginRight: "4px" }} />
               {ocr?.message}{" "}
               <button
                 type="button"
@@ -271,36 +303,82 @@ export function DocumentsPanel({ projectId, docs, onNotice }: DocumentsPanelProp
         </div>
       ) : null}
 
+      {!loading && documents.length > 0 ? (
+        <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+          <label className="field" style={{ flex: 1 }}>
+            <input
+              type="search"
+              className="field__input"
+              value={filterQuery}
+              onChange={(e) => setFilterQuery(e.target.value)}
+              placeholder="Filtrar documentos por nome nesta lista…"
+              style={{ padding: "6px 12px", fontSize: "13px" }}
+            />
+          </label>
+          {filterQuery ? (
+            <button
+              type="button"
+              className="btn btn--small"
+              onClick={() => setFilterQuery("")}
+            >
+              Limpar filtro
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
       {error ? (
         <div className="empty">
-          <p>{error}</p>
-          <button type="button" className="btn" onClick={() => void refresh()}>
-            Tentar novamente
+          <div className="empty__icon">
+            <Icon name="alert-triangle" size={20} />
+          </div>
+          <p className="extract__error">{error}</p>
+          <button type="button" className="btn btn--small" onClick={() => void refresh()}>
+            <Icon name="refresh" size={14} />
+            <span>Tentar novamente</span>
           </button>
         </div>
       ) : loading ? (
-        <p className="muted" role="status">
-          Carregando documentos…
-        </p>
+        <div className="empty" role="status">
+          <div className="empty__icon">
+            <Icon name="refresh" size={20} />
+          </div>
+          <p className="muted">Carregando inventário de documentos…</p>
+        </div>
       ) : documents.length === 0 ? (
         <div className="empty">
-          <p>Ainda não há documentos neste projeto.</p>
-          <p className="muted">
-            Importe imagens (PNG, JPEG), arquivos TXT e PDF, ou cole um texto. O texto é extraído
-            localmente (com OCR quando necessário) e fica disponível na aba Pesquisar.
+          <div className="empty__icon">
+            <Icon name="layers" size={22} />
+          </div>
+          <p><strong>Nenhum documento neste projeto</strong></p>
+          <p className="muted small">
+            Importe arquivos de imagem (PNG, JPEG), documentos PDF ou arquivos de texto TXT. O conteúdo
+            será extraído localmente via OCR e segmentação forense.
           </p>
+        </div>
+      ) : filteredDocuments.length === 0 ? (
+        <div className="empty">
+          <p>Nenhum documento encontrado com o termo “{filterQuery}”.</p>
+          <button type="button" className="btn btn--small" onClick={() => setFilterQuery("")}>
+            Limpar filtro
+          </button>
         </div>
       ) : (
         <ul className="doclist">
-          {documents.map((doc) => {
+          {filteredDocuments.map((doc) => {
             const tone = AVAILABILITY_TONE[doc.availability];
             const hint = availabilityHint(doc.availability, doc.storageMode);
+            const formatIcon = getFormatIcon(doc.format);
+
             return (
               <li key={doc.id} className="doc">
                 <div className="doc__main">
-                  <p className="doc__name" title={doc.name}>
-                    {doc.name}
-                  </p>
+                  <div className="doc__name-row">
+                    <Icon name={formatIcon} size={16} />
+                    <p className="doc__name" title={doc.name}>
+                      {doc.name}
+                    </p>
+                  </div>
                   <p className="doc__meta">
                     <span className="badge">{FORMAT_LABEL[doc.format]}</span>
                     <span>{formatBytes(doc.sizeBytes)}</span>
@@ -312,18 +390,20 @@ export function DocumentsPanel({ projectId, docs, onNotice }: DocumentsPanelProp
                       {doc.sourcePath}
                     </p>
                   ) : null}
-                  <p className="doc__status">
-                    <span className={`badge badge--${tone}`}>{AVAILABILITY_LABEL[doc.availability]}</span>
-                    {hint ? <span className="muted small"> {hint}</span> : null}
-                  </p>
-                  <p className="doc__status">
-                    <span className={`badge badge--${EXTRACTION_TONE[doc.extraction.status]}`}>
-                      {EXTRACTION_LABEL[doc.extraction.status]}
-                    </span>
-                    {describeExtraction(doc.extraction) ? (
-                      <span className="muted small"> {describeExtraction(doc.extraction)}</span>
-                    ) : null}
-                  </p>
+                  <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" }}>
+                    <p className="doc__status">
+                      <span className={`badge badge--${tone}`}>{AVAILABILITY_LABEL[doc.availability]}</span>
+                      {hint ? <span className="muted small"> {hint}</span> : null}
+                    </p>
+                    <p className="doc__status">
+                      <span className={`badge badge--${EXTRACTION_TONE[doc.extraction.status]}`}>
+                        {EXTRACTION_LABEL[doc.extraction.status]}
+                      </span>
+                      {describeExtraction(doc.extraction) ? (
+                        <span className="muted small"> {describeExtraction(doc.extraction)}</span>
+                      ) : null}
+                    </p>
+                  </div>
                 </div>
                 <div className="doc__actions">
                   <button
@@ -331,9 +411,10 @@ export function DocumentsPanel({ projectId, docs, onNotice }: DocumentsPanelProp
                     className="btn btn--small"
                     onClick={() => void verify(doc)}
                     disabled={busy}
-                    title="Relê o arquivo e confere o SHA-256 registrado"
+                    title="Recalcula o hash SHA-256 e verifica integridade física do arquivo"
                   >
-                    {verifyingId === doc.id ? "Verificando…" : "Verificar"}
+                    <Icon name="shield-check" size={13} />
+                    <span>{verifyingId === doc.id ? "Verificando…" : "Verificar"}</span>
                   </button>
                   {isRetryable(doc.extraction) ? (
                     <button
@@ -342,7 +423,8 @@ export function DocumentsPanel({ projectId, docs, onNotice }: DocumentsPanelProp
                       onClick={() => void start([doc.id])}
                       disabled={busy || running}
                     >
-                      Tentar novamente
+                      <Icon name="refresh" size={13} />
+                      <span>Reprocessar</span>
                     </button>
                   ) : null}
                   <button
@@ -350,8 +432,9 @@ export function DocumentsPanel({ projectId, docs, onNotice }: DocumentsPanelProp
                     className="btn btn--small btn--quiet"
                     onClick={() => setToRemove(doc)}
                     disabled={busy}
+                    title="Remover documento do projeto"
                   >
-                    Remover
+                    <Icon name="trash" size={13} />
                   </button>
                 </div>
               </li>
@@ -380,7 +463,7 @@ export function DocumentsPanel({ projectId, docs, onNotice }: DocumentsPanelProp
       <ConfirmDialog
         open={toRemove !== null}
         title="Remover documento do projeto?"
-        confirmLabel={toRemove?.storageMode === "copy" ? "Remover e excluir a cópia" : "Remover do projeto"}
+        confirmLabel={toRemove?.storageMode === "copy" ? "Remover e excluir cópia" : "Remover do projeto"}
         busy={removing}
         onConfirm={() => void confirmRemove()}
         onCancel={() => setToRemove(null)}
@@ -390,13 +473,12 @@ export function DocumentsPanel({ projectId, docs, onNotice }: DocumentsPanelProp
         </p>
         {toRemove?.storageMode === "copy" ? (
           <p>
-            O registro será removido e a <strong>cópia guardada dentro do projeto será excluída</strong>.
+            O registro será removido e a <strong>cópia gerenciada dentro da pasta do projeto será excluída</strong>.
             O arquivo original, em sua pasta de origem, não será alterado nem apagado.
           </p>
         ) : (
           <p>
-            Apenas o registro será removido do projeto. Nenhum arquivo é excluído: o original
-            continua intacto onde está.
+            Apenas o registro e os índices serão removidos do projeto. O arquivo original continua intacto no disco.
           </p>
         )}
       </ConfirmDialog>

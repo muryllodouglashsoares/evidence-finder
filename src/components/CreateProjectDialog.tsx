@@ -4,6 +4,7 @@ import { validateProjectName } from "../lib/validation";
 import type { DirectorySelection, ProjectInfo } from "../types/contracts";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Dialog } from "./Dialog";
+import { Icon } from "./Icon";
 
 interface CreateProjectDialogProps {
   open: boolean;
@@ -81,6 +82,7 @@ export function CreateProjectDialog({ open, onCancel, onCreated }: CreateProject
               type="text"
               value={name}
               onChange={(event) => setName(event.target.value)}
+              placeholder="Ex.: Operação Alfa · Caso 2026-04"
               aria-invalid={nameError !== null}
               aria-describedby="name-help"
               autoFocus
@@ -88,7 +90,7 @@ export function CreateProjectDialog({ open, onCancel, onCreated }: CreateProject
               spellCheck={false}
             />
             <span id="name-help" className={nameError ? "field__help field__help--error" : "field__help"}>
-              {nameError ?? "O nome também será o nome da pasta do projeto."}
+              {nameError ?? "O nome também definirá o diretório do projeto no computador."}
             </span>
           </label>
 
@@ -96,10 +98,11 @@ export function CreateProjectDialog({ open, onCancel, onCreated }: CreateProject
             <span className="field__label">Local de armazenamento</span>
             <div className="field__row">
               <span className="path" title={location?.displayPath}>
-                {location ? location.displayPath : "Nenhuma pasta escolhida"}
+                {location ? location.displayPath : "Nenhuma pasta selecionada"}
               </span>
-              <button type="button" className="btn" onClick={() => void chooseLocation()}>
-                Escolher pasta…
+              <button type="button" className="btn btn--small" onClick={() => void chooseLocation()}>
+                <Icon name="folder-open" size={15} />
+                <span>Escolher pasta…</span>
               </button>
             </div>
           </div>
@@ -115,7 +118,8 @@ export function CreateProjectDialog({ open, onCancel, onCreated }: CreateProject
               Cancelar
             </button>
             <button type="submit" className="btn btn--primary" disabled={!canReview}>
-              Revisar e criar
+              <Icon name="arrow-right" size={15} />
+              <span>Revisar e criar</span>
             </button>
           </div>
         </form>
@@ -129,13 +133,12 @@ export function CreateProjectDialog({ open, onCancel, onCreated }: CreateProject
         onConfirm={() => void create()}
         onCancel={() => setStep("form")}
       >
-        <p>Será criada uma nova pasta para o projeto em:</p>
+        <p>Será criado um novo diretório de projeto seguro em:</p>
         <p className="path path--block">
           {location ? `${location.displayPath} › ${trimmed}` : null}
         </p>
-        <p className="muted">
-          Nenhum arquivo existente será alterado ou removido. Se já houver algo com esse nome no
-          local, a criação será cancelada.
+        <p className="muted small">
+          Nenhum arquivo existente será alterado ou apagado. Se já existir uma pasta ou base com esse nome no local, a operação será recusada para proteger seus dados.
         </p>
       </ConfirmDialog>
     </>

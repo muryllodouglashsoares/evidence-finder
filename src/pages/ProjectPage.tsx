@@ -5,6 +5,7 @@ import type { Notice } from "../components/StatusMessage";
 import { useDocuments } from "../hooks/useDocuments";
 import { formatDateTime } from "../lib/format";
 import type { ProjectInfo } from "../types/contracts";
+import { Icon } from "../components/Icon";
 
 interface ProjectPageProps {
   project: ProjectInfo;
@@ -21,54 +22,73 @@ export function ProjectPage({ project, onClose, onNotice }: ProjectPageProps) {
   return (
     <main className="project">
       <header className="project__header">
-        <div>
-          <p className="eyebrow">Projeto aberto</p>
+        <div className="project__identity">
+          <div className="project__title-row">
+            <span className="eyebrow">
+              <Icon name="shield-check" size={13} />
+              <span>Projeto em Análise</span>
+            </span>
+            <span className="project__folder-pill" title={project.directory}>
+              <Icon name="folder" size={13} />
+              <span>{project.directory}</span>
+            </span>
+          </div>
           <h1 className="project__title">{project.name}</h1>
+          <div className="meta-chips">
+            <span className="meta-chip">
+              <Icon name="calendar" size={13} />
+              <span>Criado: <strong>{formatDateTime(project.createdAt)}</strong></span>
+            </span>
+            <span className="meta-chip">
+              <Icon name="clock" size={13} />
+              <span>Atualizado: <strong>{formatDateTime(project.updatedAt)}</strong></span>
+            </span>
+            <span className="meta-chip">
+              <Icon name="hash" size={13} />
+              <span>ID: <code className="mono">{project.id.slice(0, 12)}…</code></span>
+            </span>
+          </div>
         </div>
-        <button type="button" className="btn" onClick={onClose}>
-          Fechar projeto
-        </button>
+
+        <div className="project__controls">
+          <button type="button" className="btn btn--small" onClick={onClose}>
+            <Icon name="x" size={14} />
+            <span>Fechar projeto</span>
+          </button>
+        </div>
       </header>
 
-      <dl className="meta">
-        <div>
-          <dt>Pasta</dt>
-          <dd className="path path--block">{project.directory}</dd>
-        </div>
-        <div>
-          <dt>Criado em</dt>
-          <dd>{formatDateTime(project.createdAt)}</dd>
-        </div>
-        <div>
-          <dt>Última atualização</dt>
-          <dd>{formatDateTime(project.updatedAt)}</dd>
-        </div>
-        <div>
-          <dt>Identificador</dt>
-          <dd className="mono">{project.id}</dd>
-        </div>
-      </dl>
-
       <div className="tabs" role="tablist" aria-label="Seções do projeto">
-        {(
-          [
-            ["search", "Pesquisar"],
-            ["documents", `Documentos${docs.loading ? "" : ` (${docs.documents.length})`}`],
-          ] as const
-        ).map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            role="tab"
-            id={`tab-${id}`}
-            aria-selected={tab === id}
-            aria-controls={`panel-${id}`}
-            className={tab === id ? "tab tab--active" : "tab"}
-            onClick={() => setTab(id)}
-          >
-            {label}
-          </button>
-        ))}
+        <button
+          type="button"
+          role="tab"
+          id="tab-search"
+          aria-selected={tab === "search"}
+          aria-controls="panel-search"
+          className={tab === "search" ? "tab tab--active" : "tab"}
+          onClick={() => setTab("search")}
+        >
+          <Icon name="search" size={15} />
+          <span>Pesquisar e Analisar</span>
+        </button>
+
+        <button
+          type="button"
+          role="tab"
+          id="tab-documents"
+          aria-selected={tab === "documents"}
+          aria-controls="panel-documents"
+          className={tab === "documents" ? "tab tab--active" : "tab"}
+          onClick={() => setTab("documents")}
+        >
+          <Icon name="layers" size={15} />
+          <span>Documentos e Fontes</span>
+          {!docs.loading ? (
+            <span className="badge">
+              {docs.documents.length}
+            </span>
+          ) : null}
+        </button>
       </div>
 
       {/* Os dois painéis ficam montados: trocar de aba preserva a pesquisa e os resultados. */}
@@ -82,6 +102,7 @@ export function ProjectPage({ project, onClose, onNotice }: ProjectPageProps) {
           onNotice={onNotice}
         />
       </div>
+
       <div role="tabpanel" id="panel-documents" aria-labelledby="tab-documents" hidden={tab !== "documents"}>
         <DocumentsPanel projectId={project.id} docs={docs} onNotice={onNotice} />
       </div>
