@@ -455,28 +455,34 @@ ul, ol {
 /* =========================================================================
    TELA INICIAL (HOME)
    ========================================================================= */
-.home {
-  flex: 1;
-  display: grid;
-  grid-template-columns: minmax(360px, 5fr) minmax(380px, 6fr);
-  gap: 48px;
-  padding: 48px 56px;
-  max-width: 1280px;
-  width: 100%;
-  margin: 0 auto;
-  align-items: start;
+/* O painel inicial ocupa a janela inteira; só a lista de projetos rola. */
+.app:has(> .home) {
+  height: 100%;
 }
 
-.home__intro {
+.home {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 40px;
+  padding: 32px 48px 36px;
+  width: 100%;
+}
+
+/* Área esquerda: identificação no topo e o panda ocupando o restante da altura */
+.home__stage {
   display: flex;
   flex-direction: column;
-  gap: 24px;
-  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  min-height: 0;
 }
 
 .home__brand {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 12px;
 }
 
@@ -486,9 +492,6 @@ ul, ol {
   line-height: 1.1;
   letter-spacing: -0.025em;
   color: var(--ink);
-  display: flex;
-  align-items: center;
-  gap: 12px;
 }
 
 .home__hero-badge {
@@ -506,82 +509,151 @@ ul, ol {
   text-transform: uppercase;
 }
 
-/* Panda / Mascote 3D Asset Slot */
-.home__mascot-card {
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  padding: 16px 20px;
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  box-shadow: var(--shadow-sm);
-  width: 100%;
+.home__panda {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  /* Brilho discreto atrás do modelo, sem moldura */
+  background: radial-gradient(ellipse 55% 50% at 50% 52%, var(--accent-glow), transparent 70%);
 }
 
-.home__mascot-avatar {
-  width: 76px;
-  height: 76px;
-  border-radius: var(--radius);
-  background: linear-gradient(135deg, var(--surface-2), var(--accent-bg));
-  border: 1px solid var(--accent-border);
+/* Panda 3D: preenche o contêiner (o canvas é dimensionado pelo ResizeObserver) */
+.panda--fill {
+  position: absolute;
+  inset: 0;
+}
+
+.panda {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 28px;
-  flex-shrink: 0;
-  box-shadow: var(--shadow-xs);
-  overflow: hidden;
+  cursor: pointer;
 }
 
-.home__mascot-3d canvas {
+.panda canvas {
   display: block;
+  width: 100%;
+  height: 100%;
   outline: none;
 }
 
-.home__mascot-info {
+.panda__placeholder {
+  opacity: 0.6;
+}
+
+.panda--fallback {
+  cursor: default;
+}
+
+/* Área direita: ações auxiliares no topo, depois a lista de projetos */
+.home__side {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 12px;
   min-width: 0;
+  min-height: 0;
+  width: 100%;
+  max-width: 640px;
+  justify-self: start;
 }
 
-.home__mascot-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--ink);
+.home__aux {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  justify-content: flex-end;
+  gap: 4px;
 }
 
-.home__mascot-desc {
+.help {
+  position: relative;
+}
+
+.help__panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  width: min(340px, calc(100vw - 32px));
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+
+.help__steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.help__steps li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   font-size: 12.5px;
   color: var(--ink-soft);
-  line-height: 1.4;
+  line-height: 1.45;
 }
 
-.principles {
-  display: grid;
-  gap: 12px;
-  width: 100%;
-  border-left: 3px solid var(--accent);
-  padding-left: 18px;
-}
-
-.principles dt {
-  font-weight: 600;
-  font-size: 13.5px;
+.help__steps strong {
+  font-size: 13px;
   color: var(--ink);
+}
+
+/* Conteúdo do diálogo "Sobre" */
+.about {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 0;
+}
+
+.about__item dt {
   display: flex;
   align-items: center;
   gap: 6px;
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--ink);
 }
 
-.principles dd {
-  color: var(--ink-soft);
+.about__item dd {
+  margin: 2px 0 0 21px;
   font-size: 13px;
-  margin-top: 2px;
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+
+.about__footer {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.home__recents {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 16px 18px;
+  box-shadow: var(--shadow-sm);
+}
+
+.home__recents-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
 }
 
 .actions {
@@ -590,56 +662,48 @@ ul, ol {
   flex-wrap: wrap;
 }
 
-.home__recents {
+.home__actions {
   display: flex;
-  flex-direction: column;
-  gap: 16px;
-  min-width: 0;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  padding: 24px;
-  box-shadow: var(--shadow-sm);
-}
-
-.home__recents-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--line);
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .recents {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .recent {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 16px;
-  padding: 14px 16px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--surface-2);
-  transition: all var(--transition-fast);
+  gap: 12px;
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast);
 }
 
-.recent:hover {
+.recent:last-child {
+  border-bottom: 0;
+}
+
+.recent:hover,
+.recent:focus-within {
   background: var(--surface-hover);
-  border-color: var(--line-strong);
-  box-shadow: var(--shadow-xs);
 }
 
 .recent__main {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
 .recent__name {
@@ -649,6 +713,13 @@ ul, ol {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+}
+
+.recent__name span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .recent__path {
@@ -670,7 +741,8 @@ ul, ol {
 
 .recent__actions {
   display: flex;
-  gap: 6px;
+  align-items: center;
+  gap: 4px;
   flex-shrink: 0;
 }
 
@@ -1660,10 +1732,24 @@ ul, ol {
    RESPONSIVIDADE E ACESSIBILIDADE
    ========================================================================= */
 @media (max-width: 960px) {
+  .app:has(> .home) {
+    height: auto;
+  }
   .home {
     grid-template-columns: 1fr;
-    padding: 32px 24px;
-    gap: 32px;
+    grid-template-rows: auto auto;
+    padding: 24px 20px 32px;
+    gap: 20px;
+  }
+  .home__panda {
+    flex: none;
+    height: clamp(260px, 42vh, 420px);
+  }
+  .home__side {
+    max-width: none;
+  }
+  .recents {
+    overflow: visible;
   }
   .project {
     padding: 20px 16px;

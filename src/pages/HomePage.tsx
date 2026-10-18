@@ -1,5 +1,8 @@
+import { useState } from "react";
 import { formatDateTime } from "../lib/format";
 import type { RecentProject } from "../types/contracts";
+import { AboutDialog } from "../components/AboutDialog";
+import { HelpMenu } from "../components/HelpMenu";
 import { Icon } from "../components/Icon";
 import { PandaViewer } from "../components/PandaViewer";
 
@@ -19,9 +22,11 @@ interface HomePageProps {
 export function HomePage(props: HomePageProps) {
   const { recents, recentsLoading, recentsError, busy } = props;
 
+  const [aboutOpen, setAboutOpen] = useState(false);
+
   return (
     <main className="home">
-      <section className="home__intro" aria-labelledby="app-title">
+      <section className="home__stage" aria-labelledby="app-title">
         <div className="home__brand">
           <div className="home__hero-badge">
             <Icon name="shield-check" size={14} />
@@ -30,86 +35,55 @@ export function HomePage(props: HomePageProps) {
           <h1 id="app-title" className="home__title">
             Evidence Finder
           </h1>
-          <p className="lead">
-            Análise e busca inteligente em grandes volumes de evidências digitais: imagens,
-            capturas de tela, conversas, PDFs e arquivos de texto. Rastreabilidade absoluta até a fonte original.
-          </p>
         </div>
 
-        {/* Mascote Investigador Forense (Poly Pizza / Quaternius Asset Slot) */}
-        <div className="home__mascot-card">
-          <div className="home__mascot-avatar" title="Panda Investigador 3D (Poly Pizza / Quaternius) · Gire ou passe o cursor">
-            <PandaViewer size={74} />
-          </div>
-          <div className="home__mascot-info">
-            <p className="home__mascot-title">
-              <span>Agente de Inspeção Local</span>
-              <span className="badge badge--ok">Offline</span>
-            </p>
-            <p className="home__mascot-desc">
-              Todo o processamento de OCR, indexação FTS5 e busca semântica é executado estritamente
-              no seu hardware local, sem envio de dados ou conexão externa.
-            </p>
-          </div>
-        </div>
-
-        <dl className="principles">
-          <div>
-            <dt>
-              <Icon name="database" size={15} />
-              <span>Privacidade por Arquitetura</span>
-            </dt>
-            <dd>Sem contas, telemetria, requisições em nuvem ou modelos remotos.</dd>
-          </div>
-          <div>
-            <dt>
-              <Icon name="shield" size={15} />
-              <span>Integridade e Não-Destrutividade</span>
-            </dt>
-            <dd>Seus arquivos originais permanecem intactos, verificados por SHA-256.</dd>
-          </div>
-          <div>
-            <dt>
-              <Icon name="eye" size={15} />
-              <span>Rastreabilidade Completa</span>
-            </dt>
-            <dd>Cada trecho indexado vincula-se à página, linha ou coordenada de origem.</dd>
-          </div>
-        </dl>
-
-        <div className="actions">
-          <button
-            type="button"
-            className="btn btn--primary"
-            onClick={props.onCreate}
-            disabled={busy}
-          >
-            <Icon name="plus" size={16} />
-            <span>Novo projeto</span>
-          </button>
-          <button
-            type="button"
-            className="btn"
-            onClick={props.onOpenFolder}
-            disabled={busy}
-          >
-            <Icon name="folder-open" size={16} />
-            <span>Abrir projeto…</span>
-          </button>
+        <div className="home__panda">
+          <PandaViewer />
         </div>
       </section>
+
+      <div className="home__side">
+        <div className="home__aux">
+          <button
+            type="button"
+            className="btn btn--small btn--quiet"
+            onClick={() => setAboutOpen(true)}
+          >
+            <Icon name="info" size={15} />
+            <span>Sobre</span>
+          </button>
+          <HelpMenu />
+        </div>
 
       <section className="home__recents" aria-labelledby="recents-title">
         <div className="home__recents-header">
           <h2 id="recents-title" className="section-title">
             <Icon name="clock" size={15} />
             <span>Projetos recentes</span>
+            {recents.length > 0 && !recentsLoading ? (
+              <span className="badge">{recents.length}</span>
+            ) : null}
           </h2>
-          {recents.length > 0 && !recentsLoading ? (
-            <span className="badge">
-              {recents.length} {recents.length === 1 ? "projeto" : "projetos"}
-            </span>
-          ) : null}
+          <div className="home__actions">
+            <button
+              type="button"
+              className="btn btn--small btn--primary"
+              onClick={props.onCreate}
+              disabled={busy}
+            >
+              <Icon name="plus" size={14} />
+              <span>Novo projeto</span>
+            </button>
+            <button
+              type="button"
+              className="btn btn--small"
+              onClick={props.onOpenFolder}
+              disabled={busy}
+            >
+              <Icon name="folder-open" size={14} />
+              <span>Abrir projeto…</span>
+            </button>
+          </div>
         </div>
 
         {recentsLoading ? (
@@ -196,16 +170,18 @@ export function HomePage(props: HomePageProps) {
                     className="btn btn--small btn--quiet"
                     onClick={() => props.onForgetRecent(project)}
                     disabled={busy}
-                    title="Remove da lista sem apagar nenhum arquivo do disco"
+                    title="Remover da lista, sem apagar nenhum arquivo do disco"
+                    aria-label={`Remover ${project.name} da lista`}
                   >
-                    <span>Remover</span>
+                    <Icon name="x" size={14} />
                   </button>
                   <button
                     type="button"
                     className="btn btn--small btn--quiet"
                     onClick={() => props.onDeleteRecent(project)}
                     disabled={busy || !project.available}
-                    title="Exclui os índices e cópias gerenciadas pelo Evidence Finder para este projeto"
+                    title="Excluir os índices e cópias gerenciadas pelo Evidence Finder para este projeto"
+                    aria-label={`Excluir o projeto ${project.name}`}
                   >
                     <Icon name="trash" size={14} />
                   </button>
@@ -215,6 +191,9 @@ export function HomePage(props: HomePageProps) {
           </ul>
         )}
       </section>
+      </div>
+
+      <AboutDialog open={aboutOpen} onClose={() => setAboutOpen(false)} />
     </main>
   );
 }
