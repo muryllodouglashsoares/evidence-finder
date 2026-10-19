@@ -11,6 +11,8 @@ interface DialogProps {
   children: ReactNode;
 }
 
+let scrollLocks = 0;
+
 /** Modal baseado em <dialog> nativo: foco, Esc e acessibilidade vêm do navegador. */
 export function Dialog({ open, title, onClose, wide = false, children }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -20,6 +22,21 @@ export function Dialog({ open, title, onClose, wide = false, children }: DialogP
     if (!dialog) return;
     if (open && !dialog.open) dialog.showModal();
     if (!open && dialog.open) dialog.close();
+  }, [open]);
+
+  // Trava a rolagem da página de trás enquanto o diálogo estiver aberto.
+  // Contador compartilhado: suporta diálogos abertos ao mesmo tempo.
+  useEffect(() => {
+    if (!open) return;
+    scrollLocks += 1;
+    document.documentElement.classList.add("scroll-locked");
+    return () => {
+      scrollLocks -= 1;
+      if (scrollLocks <= 0) {
+        scrollLocks = 0;
+        document.documentElement.classList.remove("scroll-locked");
+      }
+    };
   }, [open]);
 
   return (
