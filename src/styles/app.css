@@ -1453,7 +1453,35 @@ ul, ol {
   overflow: hidden;
 }
 
+/* Enquanto há diálogo aberto, a página de trás não rola. */
+html.scroll-locked,
+html.scroll-locked body {
+  overflow: hidden;
+}
+
+/* O diálogo tem altura máxima e rola por conta própria, sem repassar a roda do mouse ao fundo. */
+.dialog[open] {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - 32px);
+  overscroll-behavior: contain;
+}
+
+.dialog .dialog__body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.export__occurrences,
+.filelist,
+.filters__docs,
+.ctx {
+  overscroll-behavior: contain;
+}
+
 .dialog::backdrop {
+  overscroll-behavior: contain;
   background: rgba(0, 0, 0, 0.65);
   backdrop-filter: blur(4px);
 }
