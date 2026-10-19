@@ -32,6 +32,8 @@ fn occurrence(text: &str) -> ReportOccurrence {
             ("SHA-256".into(), "ab".repeat(32)),
         ],
         text: text.into(),
+        context_before: None,
+        context_after: None,
         notices: Vec::new(),
         marks: Vec::new(),
     }
@@ -489,6 +491,8 @@ fn embedded_image_object_has_the_right_size_and_original_jpeg_bytes_are_untouche
         .values()
         .filter_map(|o| o.as_stream().ok())
         .filter(|s| s.dict.get(b"Subtype").ok().and_then(|n| n.as_name().ok()) == Some(b"Image".as_slice()))
+        // A marca do Evidence Finder (capa) também é uma imagem; aqui só interessam as evidências.
+        .filter(|s| s.dict.get(b"Width").ok().and_then(|w| w.as_i64().ok()) != Some(LOGO_PX as i64))
         .collect();
     assert_eq!(images.len(), 1);
     let s = images[0];
@@ -580,4 +584,66 @@ fn inconsistent_raw_image_is_rejected_not_embedded() {
     let mut bad = gray_image(10, 10);
     bad.data = ImageData::Raw { data: vec![0; 5], gray: true };
     assert!(render(&visual_doc(vec![one_visual(bad, vec![entry(1, "x", vec![], vec![R])])])).is_err());
+}
+
+#[test]
+fn cover_has_brand_logo_once_and_only_on_the_first_page() {
+    let occs: Vec<ReportOccurrence> = (0..40).map(|_| occurrence(&"linha de teste ".repeat(60))).collect();
+    let pdf = render(&document(occs)).unwrap();
+    let doc = lopdf::Document::load_mem(&pdf).unwrap();
+    let pages = doc.get_pages();
+    assert!(pages.len() > 2);
+    let mut with_logo = Vec::new();
+    for (number, id) in &pages {
+        let content = String::from_utf8_lossy(&doc.get_page_content(*id).unwrap()).to_string();
+        if content.contains("/Logo Do") {
+            with_logo.push(*number);
+        }
+    }
+    assert_eq!(with_logo, vec![1]);
+    assert_eq!(LOGO_RGB.len(), (LOGO_PX * LOGO_PX * 3) as usize);
+    assert!(page_texts(&pdf)[0].contains("Evidence Finder"));
+}
+
+#[test]
+fn index_cites_the_real_page_of_each_occurrence() {
+    let mut doc = document(
+        (0..30)
+            .map(|i| {
+                let mut o = occurrence(&"palavra ".repeat(120));
+                o.heading = format!("Ocorrência {:03} — conversa.txt", i + 1);
+                o
+            })
+            .collect(),
+    );
+    doc.index = (0..30).map(|i| (format!("{:03}", i + 1), "conversa.txt · literal".to_string())).collect();
+    let pdf = render(&doc).unwrap();
+    let texts = page_texts(&pdf);
+    assert!(texts.len() > 3);
+    let normalized: Vec<String> = texts.iter().map(|t| t.split_whitespace().collect::<Vec<_>>().join(" ")).collect();
+    for n in [1usize, 15, 30] {
+        let heading = format!("Ocorrência {n:03} — conversa.txt");
+        // O índice (capa) também contém "001 conversa.txt…", mas não o título completo "Ocorrência …".
+        let page = normalized.iter().position(|t| t.contains(&heading)).expect("título no corpo") + 1;
+        let cited = format!("{n:03} conversa.txt · literal · p. {page}");
+        assert!(
+            normalized[0].contains(&cited) || normalized.iter().take(page).any(|t| t.contains(&cited)),
+            "índice deve citar p. {page} para a ocorrência {n}"
+        );
+    }
+}
+
+#[test]
+fn context_boxes_appear_only_when_neighbours_exist_and_stay_literal() {
+    let mut with = occurrence("trecho encontrado");
+    with.context_before = Some("mensagem anterior com acentuação: ação".into());
+    with.context_after = Some("mensagem posterior".into());
+    let pdf = render(&document(vec![with, occurrence("sem vizinhos")])).unwrap();
+    let all = page_texts(&pdf).join("\n");
+    let flat = all.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(flat.contains("CONTEXTO ANTERIOR"));
+    assert!(flat.contains("mensagem anterior com acentuação: ação"));
+    assert!(flat.contains("CONTEXTO POSTERIOR"));
+    assert_eq!(flat.matches("CONTEXTO ANTERIOR").count(), 1, "ocorrência sem vizinhos não ganha caixa");
+    assert_eq!(flat.matches("CONTEXTO POSTERIOR").count(), 1);
 }

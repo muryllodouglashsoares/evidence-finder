@@ -126,7 +126,7 @@ Os testes Rust (258 passam e 10 dependem de recursos externos e ficam `ignored`:
 npm run app:build      # gera o instalador NSIS em src-tauri/target/release/bundle/
 ```
 
-Os ícones em `src-tauri/icons/` são provisórios (`icon-source.png` pode ser substituído; depois rode `npm run tauri icon src-tauri/icons/icon-source.png`).
+Os ícones em `src-tauri/icons/` e `public/favicon-*.png` vêm da arte oficial do panda. Os tamanhos pequenos (16–48 px) usam uma variante recortada no panda e na lupa para manter a silhueta legível; `npm run tauri icon` sobrescreveria essa variante, então regere-os a partir de `icon-source.png` apenas se precisar trocar a arte.
 
 ## Arquitetura
 

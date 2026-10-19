@@ -210,6 +210,9 @@ struct OccurrenceData {
     segment_id: i64,
     document_id: String,
     text: String,
+    /// Trechos vizinhos (seq ±1) do mesmo documento, limitados em tamanho.
+    context_before: Option<String>,
+    context_after: Option<String>,
     location: SegmentLocation,
     kind: MatchKind,
     semantic_score: Option<f32>,
@@ -238,6 +241,44 @@ struct Snapshot {
     filters: FilterSummary,
     occurrences: Vec<OccurrenceData>,
     documents: Vec<DocData>,
+}
+
+/// Trechos vizinhos (anterior e posterior) do mesmo documento, para dar contexto
+/// ao trecho encontrado. Nunca inventa conteúdo: sem vizinho, devolve `None`.
+fn neighbour_context(
+    conn: &rusqlite::Connection,
+    project_id: &str,
+    document_id: &str,
+    segment_id: i64,
+) -> (Option<String>, Option<String>) {
+    let fetch = |delta: i64| -> Option<String> {
+        let text: String = conn
+            .query_row(
+                "SELECT n.text FROM text_segment s
+                 JOIN text_segment n ON n.document_id = s.document_id AND n.project_id = s.project_id
+                      AND n.seq = s.seq + ?4
+                 WHERE s.id = ?1 AND s.project_id = ?2 AND s.document_id = ?3",
+                params![segment_id, project_id, document_id, delta],
+                |r| r.get(0),
+            )
+            .ok()?;
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        let total = trimmed.chars().count();
+        if total <= pdf_report::MAX_CONTEXT_CHARS {
+            return Some(trimmed.to_string());
+        }
+        // Mantém o lado mais próximo do trecho encontrado e marca o corte.
+        let cut: String = if delta < 0 {
+            trimmed.chars().skip(total - pdf_report::MAX_CONTEXT_CHARS).collect()
+        } else {
+            trimmed.chars().take(pdf_report::MAX_CONTEXT_CHARS).collect()
+        };
+        Some(if delta < 0 { format!("[…] {cut}") } else { format!("{cut} […]") })
+    };
+    (fetch(-1), fetch(1))
 }
 
 fn export_error(message: &str) -> AppError {
@@ -369,7 +410,10 @@ fn take_snapshot(
                 Err("Documento de texto: não há imagem de origem.".to_string())
             };
             let pdf_text = segment.method == crate::extraction_store::SegmentMethod::PdfText;
+            let (context_before, context_after) = neighbour_context(&tx, &project.id, &document_id, *id);
             occurrences.push(OccurrenceData {
+                context_before,
+                context_after,
                 pdf_text,
                 number: index as u32 + 1,
                 segment_id: *id,
@@ -1120,6 +1164,8 @@ fn build_report(
                 heading: format!("Ocorrência {:03} — {name}", o.number),
                 system_meta: meta,
                 text: o.text.clone(),
+                context_before: o.context_before.clone(),
+                context_after: o.context_after.clone(),
                 notices,
                 marks: o.literal_ranges.clone(),
             }

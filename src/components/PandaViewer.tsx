@@ -1,23 +1,34 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { PandaDirector, REST_CLIP, type PandaActivity, type PandaCommand } from "../lib/pandaCycle";
 
 interface PandaViewerProps {
   /** Tamanho fixo em px. Sem ele, o painel preenche o contêiner pai e acompanha o redimensionamento. */
   size?: number;
   className?: string;
+  /** Estado funcional do app: "busy" (processando) e "error" têm prioridade sobre o ciclo automático. */
+  activity?: PandaActivity;
 }
 
 const FOV = 38;
 /** Fração da área visível que o panda ocupa (o restante é respiro). */
 const FILL = 0.9;
-/** Clipes do próprio GLB tocados uma vez, de tempos em tempos e ao clicar; depois volta ao "Idle". */
-const ONE_SHOTS = ["Wave", "Yes", "No", "Punch", "Duck", "HitReact", "Sword"];
+/** Duração do crossfade entre clipes (s). */
+const FADE = 0.3;
 
-export function PandaViewer({ size, className = "" }: PandaViewerProps) {
+export function PandaViewer({ size, className = "", activity = "idle" }: PandaViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  /** Ponte para o efeito de montagem: o estado do app muda sem recriar a cena 3D. */
+  const activityRef = useRef<PandaActivity>(activity);
+  const applyActivityRef = useRef<((a: PandaActivity) => void) | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [hasError, setHasError] = useState(false);
+
+  useEffect(() => {
+    activityRef.current = activity;
+    applyActivityRef.current?.(activity);
+  }, [activity]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -27,11 +38,9 @@ export function PandaViewer({ size, className = "" }: PandaViewerProps) {
     let model: THREE.Group | null = null;
     let mixer: THREE.AnimationMixer | null = null;
     let pivot: THREE.Group | null = null;
-    let idleAction: THREE.AnimationAction | null = null;
-    const oneShots = new Map<string, THREE.AnimationAction>();
-    let current: THREE.AnimationAction | null = null;
-    let lastShot = "";
-    let shotTimer: number | undefined;
+    let director: PandaDirector | null = null;
+    const actions = new Map<string, THREE.AnimationAction>();
+    let active: THREE.AnimationAction | null = null;
     let isDisposed = false;
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     // Dimensões do modelo já normalizado, usadas para enquadrar a câmera.
@@ -90,34 +99,33 @@ export function PandaViewer({ size, className = "" }: PandaViewerProps) {
     dirLight.position.set(2, 4, 3);
     scene.add(dirLight);
 
-    const rimLight = new THREE.DirectionalLight(0xd99b26, 0.9);
+    const rimLight = new THREE.DirectionalLight(0x38bdf8, 1.1);
     rimLight.position.set(-3, 2, -2);
     scene.add(rimLight);
 
-    /** Toca um clipe aleatório (diferente do anterior) com transição suave de e para o Idle. */
-    const playOneShot = () => {
-      if (!idleAction || current || reduceMotion || document.hidden) return;
-      const names = [...oneShots.keys()].filter((name) => name !== lastShot);
-      const name = names[Math.floor(Math.random() * names.length)];
-      const action = name ? oneShots.get(name) : undefined;
-      if (!name || !action) return;
-      lastShot = name;
-      current = action;
-      action.reset().play();
-      action.crossFadeFrom(idleAction, 0.25, false);
+    /** Executa um comando do diretor com crossfade a partir do clipe ativo. */
+    const run = (command: PandaCommand | null) => {
+      if (!command) return;
+      const next = actions.get(command.kind === "rest" ? REST_CLIP : command.clip);
+      if (!next || next === active) return;
+      const looping = command.kind !== "once";
+      next.reset();
+      next.setLoop(looping ? THREE.LoopRepeat : THREE.LoopOnce, looping ? Infinity : 1);
+      next.clampWhenFinished = false;
+      next.play();
+      if (active) next.crossFadeFrom(active, FADE, false);
+      active = next;
     };
     const handleFinished = (event: { action: THREE.AnimationAction }) => {
-      if (event.action !== current || !idleAction) return;
-      const finished = current;
-      current = null;
-      idleAction.reset().play();
-      idleAction.crossFadeFrom(finished, 0.25, false);
+      if (event.action !== active || !director) return;
+      const name = [...actions].find(([, action]) => action === event.action)?.[0];
+      if (name) run(director.finished(name));
     };
-    const scheduleShot = () => {
-      shotTimer = window.setTimeout(() => {
-        playOneShot();
-        scheduleShot();
-      }, 5000 + Math.random() * 4000);
+    const handleClick = () => {
+      if (!reduceMotion && director) run(director.poke());
+    };
+    applyActivityRef.current = (next) => {
+      if (director && !reduceMotion) run(director.setActivity(next));
     };
 
     // 4. Modelo .glb local (public/panda.glb, sem rede)
@@ -139,29 +147,27 @@ export function PandaViewer({ size, className = "" }: PandaViewerProps) {
           }
         });
 
-        // Animações do próprio GLB: "Idle" em laço e clipes avulsos intercalados.
+        // Animações do próprio GLB: "Idle" em laço como base; o diretor escolhe os demais clipes.
         if (gltf.animations.length > 0) {
           mixer = new THREE.AnimationMixer(model);
-          const find = (name: string) =>
-            gltf.animations.find((clip) => clip.name.split("|").pop() === name);
-          const idleClip = find("Idle") ?? gltf.animations[0];
-          if (idleClip) {
-            idleAction = mixer.clipAction(idleClip);
-            idleAction.play();
+          for (const clip of gltf.animations) {
+            const name = clip.name.split("|").pop() ?? clip.name;
+            actions.set(name, mixer.clipAction(clip));
           }
-          for (const name of ONE_SHOTS) {
-            const clip = find(name);
-            if (!clip) continue;
-            const action = mixer.clipAction(clip);
-            action.setLoop(THREE.LoopOnce, 1);
-            action.clampWhenFinished = false;
-            oneShots.set(name, action);
-          }
-          mixer.addEventListener("finished", handleFinished);
-          // Sem movimento contínuo: congela na primeira pose do Idle.
+          const idleAction = actions.get(REST_CLIP) ?? mixer.clipAction(gltf.animations[0]!);
+          actions.set(REST_CLIP, idleAction);
+          idleAction.play();
+          active = idleAction;
+          // Pose inicial do Idle (também usada na medição do modelo).
           mixer.update(0);
-          if (reduceMotion) mixer.timeScale = 0;
-          else scheduleShot();
+          if (reduceMotion) {
+            mixer.timeScale = 0; // movimento reduzido: pose estática, sem ciclo
+          } else {
+            mixer.addEventListener("finished", handleFinished);
+            director = new PandaDirector(actions.keys());
+            const initial = activityRef.current;
+            run(initial === "idle" ? director.start() : director.setActivity(initial));
+          }
         }
         model.updateMatrixWorld(true);
 
@@ -198,6 +204,7 @@ export function PandaViewer({ size, className = "" }: PandaViewerProps) {
     let targetYaw = 0;
     let targetPitch = 0;
     const handlePointerMove = (e: PointerEvent) => {
+      if (reduceMotion) return;
       const rect = container.getBoundingClientRect();
       const dx = (e.clientX - (rect.left + rect.width / 2)) / (window.innerWidth / 2);
       const dy = (e.clientY - (rect.top + rect.height / 2)) / (window.innerHeight / 2);
@@ -210,22 +217,30 @@ export function PandaViewer({ size, className = "" }: PandaViewerProps) {
     };
     window.addEventListener("pointermove", handlePointerMove);
     document.documentElement.addEventListener("pointerleave", handlePointerLeave);
-    container.addEventListener("click", playOneShot);
+    container.addEventListener("click", handleClick);
 
     // 6. Animação; pausa com a janela oculta
     const timer = new THREE.Timer();
+    let rendered = false;
     const animate = () => {
       animId = requestAnimationFrame(animate);
       timer.update();
       const delta = Math.min(timer.getDelta(), 0.1);
 
+      run(director?.update(delta) ?? null);
       mixer?.update(delta);
+      let moving = !reduceMotion;
       if (pivot) {
         const k = 1 - Math.exp(-8 * delta);
-        pivot.rotation.y += (targetYaw - pivot.rotation.y) * k;
-        pivot.rotation.x += (targetPitch - pivot.rotation.x) * k;
+        const dy = targetYaw - pivot.rotation.y;
+        const dx = targetPitch - pivot.rotation.x;
+        pivot.rotation.y += dy * k;
+        pivot.rotation.x += dx * k;
+        if (Math.abs(dy) > 1e-3 || Math.abs(dx) > 1e-3) moving = true;
       }
-
+      // Parado (movimento reduzido e sem seguir o cursor): não redesenha quadros idênticos.
+      if (!moving && rendered) return;
+      rendered = true;
       renderer.render(scene, camera);
     };
 
@@ -248,8 +263,9 @@ export function PandaViewer({ size, className = "" }: PandaViewerProps) {
       document.removeEventListener("visibilitychange", handleVisibility);
       window.removeEventListener("pointermove", handlePointerMove);
       document.documentElement.removeEventListener("pointerleave", handlePointerLeave);
-      container.removeEventListener("click", playOneShot);
-      window.clearTimeout(shotTimer);
+      container.removeEventListener("click", handleClick);
+      applyActivityRef.current = null;
+      mixer?.removeEventListener("finished", handleFinished);
       mixer?.stopAllAction();
 
       scene.traverse((object) => {
@@ -270,6 +286,16 @@ export function PandaViewer({ size, className = "" }: PandaViewerProps) {
   const fixed = size !== undefined;
   const boxStyle = fixed ? { width: `${size}px`, height: `${size}px` } : undefined;
   const placeholderSize = fixed ? Math.floor(size * 0.4) : 96;
+  const logo = (
+    <img
+      src="/logo-panda.png"
+      alt=""
+      width={placeholderSize}
+      height={placeholderSize}
+      draggable={false}
+      style={{ borderRadius: "22%" }}
+    />
+  );
 
   if (hasError) {
     return (
@@ -277,7 +303,7 @@ export function PandaViewer({ size, className = "" }: PandaViewerProps) {
         className={`panda panda--fallback ${fixed ? "" : "panda--fill"} ${className}`}
         style={boxStyle}
       >
-        <span style={{ fontSize: `${placeholderSize}px` }}>🐼</span>
+        {logo}
       </div>
     );
   }
@@ -289,9 +315,7 @@ export function PandaViewer({ size, className = "" }: PandaViewerProps) {
       style={boxStyle}
     >
       {!loaded && (
-        <span className="panda__placeholder" style={{ fontSize: `${placeholderSize}px` }}>
-          🐼
-        </span>
+        <span className="panda__placeholder">{logo}</span>
       )}
     </div>
   );

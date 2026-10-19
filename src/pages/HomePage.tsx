@@ -32,13 +32,23 @@ export function HomePage(props: HomePageProps) {
             <Icon name="shield-check" size={14} />
             <span>Estação de Perícia Digital · 100% Offline</span>
           </div>
-          <h1 id="app-title" className="home__title">
-            Evidence Finder
-          </h1>
+          <div className="home__heading">
+            <img
+              className="home__logo"
+              src="/logo-panda.png"
+              alt=""
+              width={52}
+              height={52}
+              draggable={false}
+            />
+            <h1 id="app-title" className="home__title">
+              Evidence Finder
+            </h1>
+          </div>
         </div>
 
         <div className="home__panda">
-          <PandaViewer />
+          <PandaViewer activity={busy ? "busy" : recentsError ? "error" : "idle"} />
         </div>
       </section>
 

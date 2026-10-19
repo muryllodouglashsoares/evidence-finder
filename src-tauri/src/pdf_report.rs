@@ -27,6 +27,11 @@ use ttf_parser::{Face, GlyphId};
 
 const REGULAR_TTF: &[u8] = include_bytes!("../assets/fonts/DejaVuSans.ttf");
 const BOLD_TTF: &[u8] = include_bytes!("../assets/fonts/DejaVuSans-Bold.ttf");
+/// Marca do Evidence Finder (panda investigador): 128×128 pixels RGB de 8 bits,
+/// já compostos sobre branco, sem decodificador em tempo de execução.
+const LOGO_RGB: &[u8] = include_bytes!("../assets/logo-report-128.rgb");
+const LOGO_PX: u32 = 128;
+const LOGO_SIZE: f32 = 46.0;
 
 const PAGE_W: f32 = 595.28;
 const PAGE_H: f32 = 841.89;
@@ -50,6 +55,12 @@ const SYS_BAR: Color = (0.17, 0.34, 0.70);
 const WARN_BG: Color = (1.0, 0.95, 0.82);
 const WARN_BAR: Color = (0.80, 0.50, 0.05);
 const RULE: Color = (0.78, 0.80, 0.84);
+/// Contexto vizinho (trechos antes/depois): mais discreto que o trecho encontrado.
+const CTX_BG: Color = (0.982, 0.984, 0.988);
+const CTX_BAR: Color = (0.62, 0.66, 0.72);
+const BRAND: Color = (0.012, 0.412, 0.631);
+/// Máximo de caracteres de cada trecho de contexto reproduzido no relatório.
+pub const MAX_CONTEXT_CHARS: usize = 500;
 /// Amarelo do destaque (fundo) e da borda. O fundo é desenhado ATRÁS do texto
 /// (trechos) ou com mistura "Multiply" (imagens): o texto original continua legível.
 const YELLOW: Color = (1.0, 0.90, 0.20);
@@ -118,6 +129,9 @@ pub struct ReportOccurrence {
     pub system_meta: Vec<(String, String)>,
     /// Trecho extraído, literal (ver `text_issues` para o que muda ao desenhar).
     pub text: String,
+    /// Trecho vizinho anterior/posterior do MESMO documento (literal, quando existir).
+    pub context_before: Option<String>,
+    pub context_after: Option<String>,
     /// Avisos do sistema sobre esta ocorrência (fonte ausente, glifos…).
     pub notices: Vec<String>,
     /// Trechos literais de `text` (posições em caracteres) marcados em amarelo.
@@ -743,6 +757,31 @@ impl Layout {
         self.boxed_lines(&lines, WARN_BG, WARN_BAR, META, META_LH);
     }
 
+    /// Faixa de marca da capa: logotipo + nome do produto.
+    fn brand_header(&mut self) {
+        let top = self.y;
+        let bottom = top - LOGO_SIZE;
+        let op = format!(
+            "q {} 0 0 {} {} {} cm /Logo Do Q\n",
+            num(LOGO_SIZE),
+            num(LOGO_SIZE),
+            num(MARGIN_X),
+            num(bottom)
+        );
+        self.page().push_str(&op);
+        let tx = MARGIN_X + LOGO_SIZE + 12.0;
+        self.text_at(FontId::Bold, 15.0, BRAND, tx, top - 20.0, "Evidence Finder");
+        self.text_at(
+            FontId::Regular,
+            8.5,
+            MUTED,
+            tx,
+            top - 34.0,
+            "Pesquisa e relatório de evidências digitais · processamento 100% local",
+        );
+        self.y = bottom - 14.0;
+    }
+
     fn rule(&mut self) {
         self.ensure(6.0);
         self.y -= 3.0;
@@ -845,10 +884,13 @@ const BODY_LH: f32 = 14.0;
 const META: f32 = 8.5;
 const META_LH: f32 = 12.5;
 
-fn build_layout(doc: &ReportDocument) -> Result<Layout, AppError> {
+/// `pages[i]` = página (1-based) em que começa a ocorrência `i`; usado no índice.
+fn build_layout(doc: &ReportDocument, known_pages: &[usize]) -> Result<(Layout, Vec<usize>), AppError> {
     let mut l = Layout::new()?;
+    let mut start_pages: Vec<usize> = Vec::with_capacity(doc.occurrences.len());
 
-    // Capa
+    // Capa: marca + título
+    l.brand_header();
     l.flow(FontId::Bold, 22.0, INK, 28.0, MARGIN_X, CONTENT_W, &doc.title);
     l.flow(FontId::Regular, 13.0, MUTED, 18.0, MARGIN_X, CONTENT_W, &doc.project_name);
     l.gap(6.0);
@@ -861,7 +903,16 @@ fn build_layout(doc: &ReportDocument) -> Result<Layout, AppError> {
     if !doc.index.is_empty() {
         l.gap(6.0);
         l.label("ÍNDICE DAS OCORRÊNCIAS SELECIONADAS", SYS_BAR);
-        let lines = meta_lines(&l, &doc.index, META);
+        let numbered: Vec<(String, String)> = doc
+            .index
+            .iter()
+            .enumerate()
+            .map(|(i, (label, text))| match known_pages.get(i) {
+                Some(page) => (label.clone(), format!("{text} · p. {page}")),
+                None => (label.clone(), text.clone()),
+            })
+            .collect();
+        let lines = meta_lines(&l, &numbered, META);
         l.boxed_lines(&lines, SYS_BG, SYS_BAR, META, META_LH);
     }
     l.gap(10.0);
@@ -884,6 +935,7 @@ fn build_layout(doc: &ReportDocument) -> Result<Layout, AppError> {
         l.gap(10.0);
         l.ensure(lead.min(PAGE_H - MARGIN_TOP - MARGIN_BOTTOM));
         l.rule();
+        start_pages.push(l.pages.len());
         l.gap(4.0);
         l.flow(FontId::Bold, 12.0, INK, 17.0, MARGIN_X, CONTENT_W, &occ.heading);
 
@@ -893,11 +945,21 @@ fn build_layout(doc: &ReportDocument) -> Result<Layout, AppError> {
         );
         l.boxed_lines(&meta, SYS_BG, SYS_BAR, META, META_LH);
 
+        if let Some(before) = occ.context_before.as_deref().filter(|t| !t.trim().is_empty()) {
+            l.label("CONTEXTO ANTERIOR — trecho vizinho do mesmo documento (literal)", CTX_BAR);
+            let lines = text_lines(&l, before, META);
+            l.boxed_lines(&lines, CTX_BG, CTX_BAR, META, META_LH);
+        }
         l.label(
             "CONTEÚDO EXTRAÍDO DA FONTE — texto literal; pode conter erros de OCR ou de leitura",
             QUOTE_BAR,
         );
         l.boxed_lines(&text, QUOTE_BG, QUOTE_BAR, BODY, BODY_LH);
+        if let Some(after) = occ.context_after.as_deref().filter(|t| !t.trim().is_empty()) {
+            l.label("CONTEXTO POSTERIOR — trecho vizinho do mesmo documento (literal)", CTX_BAR);
+            let lines = text_lines(&l, after, META);
+            l.boxed_lines(&lines, CTX_BG, CTX_BAR, META, META_LH);
+        }
 
         if !occ.notices.is_empty() {
             l.label("AVISOS DO SISTEMA", WARN_BAR);
@@ -944,7 +1006,23 @@ fn build_layout(doc: &ReportDocument) -> Result<Layout, AppError> {
         l.ensure(80.0);
         l.warning_box("AVISOS E LIMITAÇÕES DESTA EXPORTAÇÃO", &doc.limitations);
     }
-    Ok(l)
+    Ok((l, start_pages))
+}
+
+/// Monta o layout até o índice (que cita páginas) estabilizar: o número de uma
+/// página pode mudar a quebra de linha do próprio índice, então repete até
+/// convergir (normalmente 2 passagens).
+fn build_stable_layout(doc: &ReportDocument) -> Result<Layout, AppError> {
+    let mut pages: Vec<usize> = vec![1; doc.occurrences.len()];
+    for _ in 0..6 {
+        let (layout, found) = build_layout(doc, &pages)?;
+        if found == pages {
+            return Ok(layout);
+        }
+        pages = found;
+    }
+    // Sem convergência (improvável): usa o índice sem páginas, que é sempre correto.
+    Ok(build_layout(doc, &[])?.0)
 }
 
 /// Cabeçalho e rodapé (numeração "Página i de N") de todas as páginas.
@@ -1106,7 +1184,7 @@ fn image_object(image: &VisualImage) -> Result<Vec<u8>, AppError> {
 }
 
 pub fn render(doc: &ReportDocument) -> Result<Vec<u8>, AppError> {
-    let mut layout = build_layout(doc)?;
+    let mut layout = build_stable_layout(doc)?;
     decorate(&mut layout, doc);
 
     // Numeração: 1 catálogo, 2 páginas, 3 info, 4..8 fonte regular, 9..13 negrito,
@@ -1132,14 +1210,15 @@ pub fn render(doc: &ReportDocument) -> Result<Vec<u8>, AppError> {
     // Imagens (um objeto cada) e o estado gráfico do destaque, depois das páginas.
     let image_first = first_page_obj + 2 * page_count;
     let gs_obj = image_first + layout.image_slots.len();
-    let resources = if layout.image_slots.is_empty() {
-        "<< /Font << /F1 4 0 R /F2 9 0 R >> >>".to_string()
-    } else {
-        let xobjects: String = (0..layout.image_slots.len())
-            .map(|slot| format!("/Im{slot} {} 0 R ", image_first + slot))
-            .collect();
-        format!("<< /Font << /F1 4 0 R /F2 9 0 R >> /XObject << {xobjects}>> /ExtGState << /GS1 {gs_obj} 0 R >> >>")
-    };
+    let has_images = !layout.image_slots.is_empty();
+    let logo_obj = if has_images { gs_obj + 1 } else { gs_obj };
+    let mut xobjects: String = (0..layout.image_slots.len())
+        .map(|slot| format!("/Im{slot} {} 0 R ", image_first + slot))
+        .collect();
+    xobjects.push_str(&format!("/Logo {logo_obj} 0 R "));
+    let ext_gstate = if has_images { format!(" /ExtGState << /GS1 {gs_obj} 0 R >>") } else { String::new() };
+    let resources =
+        format!("<< /Font << /F1 4 0 R /F2 9 0 R >> /XObject << {xobjects}>>{ext_gstate} >>");
     for (i, content) in layout.pages.iter().enumerate() {
         let page_obj = first_page_obj + 2 * i;
         objects.push(
@@ -1160,6 +1239,13 @@ pub fn render(doc: &ReportDocument) -> Result<Vec<u8>, AppError> {
         }
         objects.push(b"<< /Type /ExtGState /ca 0.9 /CA 1 /BM /Multiply >>".to_vec());
     }
+    objects.push(stream_object(
+        &format!(
+            "/Type /XObject /Subtype /Image /Width {LOGO_PX} /Height {LOGO_PX} \
+             /ColorSpace /DeviceRGB /BitsPerComponent 8"
+        ),
+        LOGO_RGB,
+    )?);
 
     let mut out: Vec<u8> = b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n".to_vec();
     let mut offsets = Vec::with_capacity(objects.len());

@@ -21,13 +21,14 @@
   --line-strong: #cbd5e1;
   --line-focus: #3b82f6;
 
-  /* Investigative Amber Accent */
-  --accent: #b45309;
-  --accent-hover: #92400e;
-  --accent-bg: #fef3c7;
-  --accent-ink: #78350f;
-  --accent-border: #fcd34d;
-  --accent-glow: rgba(180, 83, 9, 0.15);
+  /* Destaque azul/ciano (identidade do panda investigador) */
+  --accent: #0369a1;
+  --accent-hover: #075985;
+  --accent-bg: #e0f2fe;
+  --accent-ink: #0c4a6e;
+  --accent-border: #7dd3fc;
+  --accent-glow: rgba(2, 132, 199, 0.16);
+  --on-accent: #ffffff;
 
   /* Status Colors */
   --ok: #15803d;
@@ -67,7 +68,7 @@
 @media (prefers-color-scheme: dark) {
   :root {
     /* Forensic Dark Theme (Default) */
-    --bg: #090d14;
+    --bg: #070b12;
     --bg-subtle: #0e131d;
     --surface: #141b27;
     --surface-2: #1b2434;
@@ -84,13 +85,14 @@
     --line-strong: #2e3c50;
     --line-focus: #60a5fa;
 
-    /* Gold / Amber Forensic Accent */
-    --accent: #d99b26;
-    --accent-hover: #eab33a;
-    --accent-bg: #271f11;
-    --accent-ink: #fef3c7;
-    --accent-border: #785215;
-    --accent-glow: rgba(217, 155, 38, 0.22);
+    /* Destaque azul/ciano (identidade do panda investigador) */
+    --accent: #38bdf8;
+    --accent-hover: #7dd3fc;
+    --accent-bg: #0a1d30;
+    --accent-ink: #e0f2fe;
+    --accent-border: #1d5b88;
+    --accent-glow: rgba(56, 189, 248, 0.2);
+    --on-accent: #04111d;
 
     /* Status Colors */
     --ok: #4ade80;
@@ -283,7 +285,7 @@ ul, ol {
 
 .btn--primary {
   background: var(--accent);
-  color: #0b0f17;
+  color: var(--on-accent);
   border-color: var(--accent);
   font-weight: 600;
   box-shadow: 0 1px 3px var(--accent-glow);
@@ -292,7 +294,7 @@ ul, ol {
 .btn--primary:hover:not(:disabled) {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
-  color: #000000;
+  color: var(--on-accent);
   box-shadow: 0 2px 8px var(--accent-glow);
 }
 
@@ -484,6 +486,20 @@ ul, ol {
   flex-direction: column;
   align-items: flex-start;
   gap: 12px;
+}
+
+.home__heading {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.home__logo {
+  flex: none;
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  box-shadow: 0 2px 10px var(--accent-glow);
 }
 
 .home__title {
@@ -1114,7 +1130,7 @@ ul, ol {
 
 .modes__opt:has(input:checked) {
   background: var(--accent);
-  color: #0b0f17;
+  color: var(--on-accent);
   border-color: var(--accent);
   font-weight: 600;
   box-shadow: 0 1px 4px var(--accent-glow);
