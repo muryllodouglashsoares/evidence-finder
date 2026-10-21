@@ -351,6 +351,7 @@ export function ExportDialog({
             Concluir
           </button>
         ) : (
+          <>
           <button
             type="button"
             className="btn"
@@ -371,6 +372,7 @@ export function ExportDialog({
             <Icon name="download" size={14} />
             <span>{state.phase === "exporting" ? "Gerando pacote…" : state.errorStage === "export" ? "Tentar exportar novamente" : "Exportar pacote pericial"}</span>
           </button>
+          </>
         )}
       </div>
     </Dialog>
