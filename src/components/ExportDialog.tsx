@@ -3,6 +3,7 @@ import { FORMAT_LABEL } from "../lib/documents";
 import {
   buildExportSelection,
   canExport,
+  reviewReady,
   describeFilterSummary,
   exportReducer,
   FILE_STATUS_LABEL,
@@ -104,6 +105,19 @@ export function ExportDialog({
     dispatch({ type: "exportStarted" });
     try {
       const result = await core.exportEvidence(projectId, buildSelection(), token);
+      dispatch({ type: "exportDone", result });
+      onExported(result.folderName, result.warnings.length);
+    } catch (e) {
+      const error = normalizeError(e);
+      dispatch({ type: "exportFailed", code: error.code, message: error.message });
+    }
+  }
+
+  async function runExportToProject() {
+    if (!reviewReady(state)) return;
+    dispatch({ type: "exportToProjectStarted" });
+    try {
+      const result = await core.exportEvidenceToProject(projectId, buildSelection());
       dispatch({ type: "exportDone", result });
       onExported(result.folderName, result.warnings.length);
     } catch (e) {
@@ -337,6 +351,16 @@ export function ExportDialog({
             Concluir
           </button>
         ) : (
+          <button
+            type="button"
+            className="btn"
+            onClick={() => void runExportToProject()}
+            disabled={!reviewReady(state)}
+            title="Grava em uma nova subpasta de “exports”, dentro da pasta deste projeto"
+          >
+            <Icon name="folder" size={14} />
+            <span>Salvar em exports/ do projeto</span>
+          </button>
           <button
             type="button"
             className="btn btn--primary"

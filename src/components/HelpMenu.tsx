@@ -22,6 +22,10 @@ const STEPS: { title: string; text: string }[] = [
     title: "Exportar",
     text: "Selecione os resultados e clique em “Revisar e exportar” para gerar o relatório.",
   },
+  {
+    title: "Formatos e limites",
+    text: "PNG, JPEG, TXT e PDF (até 500 MB por arquivo e 500 documentos por projeto), além de texto colado. O OCR usa o Tesseract, que precisa estar instalado.",
+  },
 ];
 
 /** Menu de ajuda compacto: abre sob o botão, fecha com Esc, clique fora ou ao perder o foco. */

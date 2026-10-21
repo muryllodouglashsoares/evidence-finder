@@ -247,6 +247,17 @@ describe("revisão e exportação", () => {
     expect(canReview(EMPTY_SELECTION)).toBe(false);
   });
 
+  it("exportar para a pasta do projeto não exige destino, mas exige revisão com ocorrências", () => {
+    expect(exportReducer(IDLE_EXPORT, { type: "exportToProjectStarted" })).toBe(IDLE_EXPORT);
+    const s = loaded(); // sem destino escolhido
+    expect(exportReducer(s, { type: "exportToProjectStarted" }).phase).toBe("exporting");
+    const empty = exportReducer(
+      exportReducer(IDLE_EXPORT, { type: "open", seq: 1 }),
+      { type: "reviewLoaded", seq: 1, review: review({ occurrences: [], files: [] }) },
+    );
+    expect(exportReducer(empty, { type: "exportToProjectStarted" }).phase).toBe("review");
+  });
+
   it("estados de carregamento, sucesso e falha da exportação", () => {
     let s = exportReducer(loaded(), { type: "destinationChosen", destination });
     s = exportReducer(s, { type: "exportStarted" });

@@ -564,3 +564,28 @@ pub fn export_evidence(
     state.authorized.revoke(&destination_token);
     Ok(result)
 }
+
+/// Pasta de exportações do próprio projeto (`<projeto>/exports`).
+const PROJECT_EXPORTS_DIR: &str = "exports";
+
+/// Como `export_evidence`, mas grava na pasta `exports/` do projeto aberto, sem
+/// diálogo. O destino é derivado do projeto no núcleo: a interface não envia
+/// caminhos nem tokens. A pasta é criada se não existir; nada existente é tocado.
+#[tauri::command(async)]
+pub fn export_evidence_to_project(
+    state: State<'_, AppState>,
+    project_id: String,
+    selection: ExportSelection,
+) -> Result<ExportResult, AppError> {
+    let project = state.current_for(&project_id)?;
+    let destination = project.dir.join(PROJECT_EXPORTS_DIR);
+    std::fs::create_dir_all(&destination)?;
+    let _guard = state.export_lock.try_lock().map_err(|_| {
+        AppError::new(
+            ErrorCode::Busy,
+            "Já existe uma exportação em andamento. Aguarde a conclusão e tente novamente.",
+        )
+    })?;
+    let embedder = embedder_for(&state, selection.mode)?;
+    export::export_evidence_with(&project, &selection, &destination, embedder)
+}

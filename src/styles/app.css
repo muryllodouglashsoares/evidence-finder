@@ -1,121 +1,87 @@
-/* Evidence Finder — Estilos Forenses Modernos (100% Offline, sem fontes ou recursos de rede) */
+/* Evidence Finder — design "Sala de análise" (grafite frio + âmbar de marca-texto).
+   Tokens derivados do template do Lovable (src/styles.css, oklch convertidos para hex).
+   100% offline: nenhuma fonte ou recurso de rede. Tema único escuro. */
 
 :root {
-  color-scheme: light dark;
+  color-scheme: dark;
 
-  /* Tactical Light Theme */
-  --bg: #f4f6fa;
-  --bg-subtle: #edf1f7;
-  --surface: #ffffff;
-  --surface-2: #f0f3f8;
-  --surface-3: #e2e8f0;
-  --surface-hover: #e9eef6;
-  --surface-active: #dde4ee;
-  
-  --ink: #0f172a;
-  --ink-soft: #475569;
-  --ink-muted: #64748b;
-  --ink-faint: #94a3b8;
-  
-  --line: #d8e0eb;
-  --line-strong: #cbd5e1;
-  --line-focus: #3b82f6;
+  /* Superfícies, do mais fundo ao mais elevado */
+  --bg: #0e1013;
+  --bg-subtle: #080a0d;
+  --surface: #131619;
+  --surface-2: #1a1e22;
+  --surface-3: #202429;
+  --surface-hover: #1f2328;
+  --surface-active: #272c31;
 
-  /* Destaque azul/ciano (identidade do panda investigador) */
-  --accent: #0369a1;
-  --accent-hover: #075985;
-  --accent-bg: #e0f2fe;
-  --accent-ink: #0c4a6e;
-  --accent-border: #7dd3fc;
-  --accent-glow: rgba(2, 132, 199, 0.16);
-  --on-accent: #ffffff;
+  --ink: #ece9e4;
+  --ink-soft: #999fa6;
+  --ink-muted: #80858c;
+  --ink-faint: #6a6f76;
 
-  /* Status Colors */
-  --ok: #15803d;
-  --ok-bg: #dcfce7;
-  --ok-border: #86efac;
-  --warn: #b45309;
-  --warn-bg: #fef3c7;
-  --warn-border: #fde68a;
-  --err: #b91c1c;
-  --err-bg: #fee2e2;
-  --err-border: #fca5a5;
-  --ai: #6d28d9;
-  --ai-bg: #ede9fe;
-  --ai-border: #c4b5fd;
+  --line: #1e2226;
+  --line-strong: #282c30;
+  --line-input: #2f3338;
+  --line-focus: #f9b73f;
 
-  --focus: #2563eb;
-  --focus-ring: rgba(37, 99, 235, 0.25);
+  /* Âmbar: ação principal e ocorrências (usado com moderação) */
+  --accent: #f9b73f;
+  --accent-hover: #ffc95e;
+  --accent-bg: #31240e;
+  --accent-ink: #fef0d4;
+  --accent-border: #704e09;
+  --accent-glow: rgba(249, 183, 63, 0.16);
+  --on-accent: #1a120a;
+  --mark: rgba(249, 183, 63, 0.26);
 
-  --radius-xs: 4px;
-  --radius-sm: 6px;
-  --radius: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
+  /* Status */
+  --ok: #5eca91;
+  --ok-bg: #0e2b1b;
+  --ok-border: #1b4d34;
+  --warn: #e4b750;
+  --warn-bg: #302409;
+  --warn-border: #594414;
+  --err: #f3625d;
+  --err-bg: #3c1715;
+  --err-border: #742e2b;
+  --ai: #6db5da;
+  --ai-bg: #112732;
+  --ai-border: #214d62;
 
-  --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.05);
-  --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.04);
-  --shadow-md: 0 4px 6px -1px rgba(15, 23, 42, 0.08), 0 2px 4px -2px rgba(15, 23, 42, 0.05);
-  --shadow-lg: 0 10px 15px -3px rgba(15, 23, 42, 0.08), 0 4px 6px -4px rgba(15, 23, 42, 0.04);
-  --shadow-dialog: 0 20px 25px -5px rgba(15, 23, 42, 0.15), 0 8px 10px -6px rgba(15, 23, 42, 0.1);
+  --focus: #f9b73f;
+  --focus-ring: rgba(249, 183, 63, 0.28);
 
-  --font: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
-  --mono: "Cascadia Code", "Cascadia Mono", Consolas, "SFMono-Regular", monospace;
+  /* Raios curtos (2–4 px) e separação por linhas, como no template */
+  --radius-xs: 2px;
+  --radius-sm: 3px;
+  --radius: 4px;
+  --radius-lg: 4px;
+  --radius-xl: 6px;
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-sm: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.5), 0 2px 4px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 12px 32px -18px rgba(0, 0, 0, 0.7), 0 4px 8px rgba(0, 0, 0, 0.4);
+  --shadow-dialog: 0 24px 38px rgba(0, 0, 0, 0.7), 0 9px 12px rgba(0, 0, 0, 0.5);
+
+  /* Papel do relatório (pré-visualização) */
+  --paper: #f6f3ed;
+  --paper-ink: #171b1f;
+  --paper-muted: #5f6469;
+  --paper-rule: #d4d1ca;
+
+  /* Fontes: o template usa IBM Plex via rede; aqui só fontes do sistema (offline). */
+  --font: "IBM Plex Sans", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-doc: "IBM Plex Serif", Georgia, "Times New Roman", serif;
+  --mono: "IBM Plex Mono", "Cascadia Mono", Consolas, "SFMono-Regular", monospace;
   --transition-fast: 120ms cubic-bezier(0.4, 0, 0.2, 1);
   --transition-normal: 200ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    /* Forensic Dark Theme (Default) */
-    --bg: #070b12;
-    --bg-subtle: #0e131d;
-    --surface: #141b27;
-    --surface-2: #1b2434;
-    --surface-3: #232e42;
-    --surface-hover: #222d3f;
-    --surface-active: #2b394f;
-
-    --ink: #f1f5f9;
-    --ink-soft: #94a3b8;
-    --ink-muted: #64748b;
-    --ink-faint: #475569;
-
-    --line: #222d3d;
-    --line-strong: #2e3c50;
-    --line-focus: #60a5fa;
-
-    /* Destaque azul/ciano (identidade do panda investigador) */
-    --accent: #38bdf8;
-    --accent-hover: #7dd3fc;
-    --accent-bg: #0a1d30;
-    --accent-ink: #e0f2fe;
-    --accent-border: #1d5b88;
-    --accent-glow: rgba(56, 189, 248, 0.2);
-    --on-accent: #04111d;
-
-    /* Status Colors */
-    --ok: #4ade80;
-    --ok-bg: #0e2719;
-    --ok-border: #1a4d2c;
-    --warn: #fbbf24;
-    --warn-bg: #291e0a;
-    --warn-border: #523b12;
-    --err: #f87171;
-    --err-bg: #2d1214;
-    --err-border: #592023;
-    --ai: #a78bfa;
-    --ai-bg: #211938;
-    --ai-border: #463473;
-
-    --focus: #60a5fa;
-    --focus-ring: rgba(96, 165, 250, 0.3);
-
-    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
-    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.3);
-    --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.5), 0 2px 4px rgba(0, 0, 0, 0.4);
-    --shadow-lg: 0 12px 24px rgba(0, 0, 0, 0.6), 0 4px 8px rgba(0, 0, 0, 0.4);
-    --shadow-dialog: 0 24px 38px rgba(0, 0, 0, 0.7), 0 9px 12px rgba(0, 0, 0, 0.5);
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
   }
 }
 
@@ -451,7 +417,7 @@ ul, ol {
 }
 .notice__close:hover {
   opacity: 1;
-  background: rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 /* =========================================================================
@@ -617,35 +583,6 @@ ul, ol {
 .help__steps strong {
   font-size: 13px;
   color: var(--ink);
-}
-
-/* Conteúdo do diálogo "Sobre" */
-.about {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  margin: 0;
-}
-
-.about__item dt {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: 600;
-  font-size: 13.5px;
-  color: var(--ink);
-}
-
-.about__item dd {
-  margin: 2px 0 0 21px;
-  font-size: 13px;
-  color: var(--ink-soft);
-  line-height: 1.5;
-}
-
-.about__footer {
-  align-items: center;
-  justify-content: space-between;
 }
 
 .home__recents {
@@ -1250,7 +1187,7 @@ ul, ol {
   gap: 10px;
   margin-top: 12px;
   padding-top: 10px;
-  border-top: 1px solid rgba(167, 139, 250, 0.2);
+  border-top: 1px solid var(--ai-border);
 }
 
 .semantic__install {
@@ -1813,3 +1750,104 @@ html.scroll-locked body {
     animation: none !important;
   }
 }
+
+
+/* =========================================================================
+   REDESIGN — Sala de análise (workspace de projetos)
+   ========================================================================= */
+.eyebrow, .section-title {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  font-weight: 500;
+}
+.eyebrow { color: var(--ink-faint); }
+
+.brandmark { display: inline-block; flex: none; color: var(--ink); }
+.brandmark__accent { fill: var(--accent); }
+
+.wordmark { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); }
+.wordmark__text { display: flex; flex-direction: column; line-height: 1; }
+.wordmark__name { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+.wordmark__tag {
+  margin-top: 5px; font-family: var(--mono); font-size: 10px;
+  letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-faint);
+}
+
+.home { gap: 0; padding: 0; grid-template-columns: minmax(0, 1.1fr) minmax(360px, 0.9fr); }
+.home__stage {
+  padding: 28px 40px 32px; gap: 20px;
+  background: var(--surface); border-right: 1px solid var(--line-strong);
+}
+.home__brand { gap: 18px; }
+.home__title { font-size: 34px; font-weight: 600; max-width: 18ch; line-height: 1.15; letter-spacing: -0.02em; }
+.home__lead { max-width: 46ch; font-size: 14px; color: var(--ink-soft); }
+.home__cta { display: flex; flex-wrap: wrap; gap: 8px; }
+.home__panda {
+  border: 1px solid var(--line-strong); background-color: var(--bg-subtle);
+  background-image:
+    linear-gradient(var(--line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line) 1px, transparent 1px);
+  background-size: 24px 24px; background-position: center;
+  min-height: 220px;
+}
+.home__panda::before {
+  content: ""; position: absolute; inset: 0;
+  background: radial-gradient(ellipse 55% 50% at 50% 52%, var(--accent-glow), transparent 70%);
+  pointer-events: none;
+}
+.home__env {
+  display: flex; flex-wrap: wrap; gap: 6px 18px; font-family: var(--mono);
+  font-size: 10.5px; letter-spacing: 0.04em; color: var(--ink-faint);
+}
+.home__env span { display: inline-flex; align-items: center; gap: 6px; }
+.home__env .icon { color: var(--ok); }
+
+.home__side { max-width: none; padding: 20px 32px 32px; background: var(--bg); justify-self: stretch; }
+.home__recents {
+  background: transparent; border: 0; border-radius: 0; box-shadow: none; padding: 0;
+}
+.home__recents-header { border-bottom: 1px solid var(--line-strong); }
+.recent { border-radius: 0; }
+.recent__name { font-weight: 500; }
+
+.home__footer {
+  display: flex; align-items: center; justify-content: space-between;
+  font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint);
+  border-top: 1px solid var(--line); padding-top: 10px;
+}
+
+.project { max-width: none; padding: 0 0 40px; gap: 0; }
+.project__header {
+  border: 0; border-bottom: 1px solid var(--line-strong); border-radius: 0;
+  background: var(--bg-subtle); box-shadow: none; padding: 16px 32px;
+}
+.project__brand { display: flex; align-items: center; gap: 16px; min-width: 0; }
+.project__brand .brandmark { align-self: flex-start; margin-top: 4px; }
+.project__title { font-size: 22px; font-weight: 600; }
+.project__folder-pill { border-radius: var(--radius-sm); background: var(--bg); }
+.tabs { padding: 0 32px; gap: 0; background: var(--bg-subtle); border-bottom: 1px solid var(--line-strong); }
+.tab {
+  border: 0; border-radius: 0; margin: 0; padding: 11px 16px; position: relative;
+  box-shadow: none; background: transparent;
+}
+.tab--active { background: transparent; border: 0; box-shadow: none; }
+.tab--active::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--accent);
+}
+.project > [role="tabpanel"] { padding: 24px 32px 0; }
+
+/* Ocorrências encontradas: marca-texto âmbar */
+mark, .hl { background: var(--mark); color: var(--accent-ink); box-shadow: inset 0 -2px 0 var(--accent); padding: 0 2px; border-radius: 1px; }
+
+@media (max-width: 980px) {
+  .home { grid-template-columns: minmax(0, 1fr); overflow-y: auto; }
+  .home__stage { border-right: 0; border-bottom: 1px solid var(--line-strong); padding: 20px; }
+  .home__side { padding: 20px; }
+  .project__header, .tabs { padding-left: 20px; padding-right: 20px; }
+  .project > [role="tabpanel"] { padding: 20px 20px 0; }
+}
+
+.home { grid-template-rows: minmax(0, 1fr) auto; }
+.home__footer { grid-column: 1 / -1; padding: 10px 40px; background: var(--bg-subtle); }
+.panda--fallback { flex-direction: column; gap: 8px; color: var(--ink-faint); }

@@ -1,7 +1,7 @@
-import { useState } from "react";
+import pkg from "../../package.json";
 import { formatDateTime } from "../lib/format";
 import type { RecentProject } from "../types/contracts";
-import { AboutDialog } from "../components/AboutDialog";
+import { BrandMark } from "../components/BrandMark";
 import { HelpMenu } from "../components/HelpMenu";
 import { Icon } from "../components/Icon";
 import { PandaViewer } from "../components/PandaViewer";
@@ -22,46 +22,45 @@ interface HomePageProps {
 export function HomePage(props: HomePageProps) {
   const { recents, recentsLoading, recentsError, busy } = props;
 
-  const [aboutOpen, setAboutOpen] = useState(false);
-
   return (
     <main className="home">
       <section className="home__stage" aria-labelledby="app-title">
         <div className="home__brand">
-          <div className="home__hero-badge">
-            <Icon name="shield-check" size={14} />
-            <span>Estação de Perícia Digital · 100% Offline</span>
-          </div>
-          <div className="home__heading">
-            <img
-              className="home__logo"
-              src="/logo-panda.png"
-              alt=""
-              width={52}
-              height={52}
-              draggable={false}
-            />
-            <h1 id="app-title" className="home__title">
-              Evidence Finder
-            </h1>
+          <span className="eyebrow">
+            <BrandMark size={22} />
+            <span>Evidence Finder · análise local</span>
+          </span>
+          <h1 id="app-title" className="home__title">
+            Investigações em projetos independentes.
+          </h1>
+          <p className="home__lead">
+            Cada projeto tem a sua pasta, o seu índice e as suas exportações. A pesquisa nunca
+            mistura documentos de projetos diferentes.
+          </p>
+          <div className="home__cta">
+            <button type="button" className="btn btn--primary" onClick={props.onCreate} disabled={busy}>
+              <Icon name="plus" size={14} />
+              <span>Novo projeto</span>
+            </button>
+            <button type="button" className="btn" onClick={props.onOpenFolder} disabled={busy}>
+              <Icon name="folder-open" size={14} />
+              <span>Abrir projeto…</span>
+            </button>
           </div>
         </div>
 
         <div className="home__panda">
           <PandaViewer activity={busy ? "busy" : recentsError ? "error" : "idle"} />
         </div>
+        <p className="home__env">
+          <span><Icon name="shield-check" size={13} />Offline</span>
+          <span><Icon name="database" size={13} />Extração local</span>
+          <span><Icon name="file" size={13} />Originais preservados</span>
+        </p>
       </section>
 
       <div className="home__side">
         <div className="home__aux">
-          <button
-            type="button"
-            className="btn btn--small btn--quiet"
-            onClick={() => setAboutOpen(true)}
-          >
-            <Icon name="info" size={15} />
-            <span>Sobre</span>
-          </button>
           <HelpMenu />
         </div>
 
@@ -203,7 +202,10 @@ export function HomePage(props: HomePageProps) {
       </section>
       </div>
 
-      <AboutDialog open={aboutOpen} onClose={() => setAboutOpen(false)} />
+      <footer className="home__footer">
+        <span>Evidence Finder v{pkg.version}</span>
+        <span>Nenhum dado sai deste computador</span>
+      </footer>
     </main>
   );
 }

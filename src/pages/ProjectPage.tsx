@@ -5,6 +5,7 @@ import type { Notice } from "../components/StatusMessage";
 import { useDocuments } from "../hooks/useDocuments";
 import { formatDateTime } from "../lib/format";
 import type { ProjectInfo } from "../types/contracts";
+import { BrandMark } from "../components/BrandMark";
 import { Icon } from "../components/Icon";
 
 interface ProjectPageProps {
@@ -22,11 +23,13 @@ export function ProjectPage({ project, onClose, onNotice }: ProjectPageProps) {
   return (
     <main className="project">
       <header className="project__header">
+        <div className="project__brand">
+          <BrandMark size={34} />
         <div className="project__identity">
           <div className="project__title-row">
             <span className="eyebrow">
               <Icon name="shield-check" size={13} />
-              <span>Projeto em Análise</span>
+              <span>Projeto aberto</span>
             </span>
             <span className="project__folder-pill" title={project.directory}>
               <Icon name="folder" size={13} />
@@ -48,6 +51,7 @@ export function ProjectPage({ project, onClose, onNotice }: ProjectPageProps) {
               <span>ID: <code className="mono">{project.id.slice(0, 12)}…</code></span>
             </span>
           </div>
+        </div>
         </div>
 
         <div className="project__controls">

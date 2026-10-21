@@ -194,6 +194,7 @@ export type ExportAction =
   | { type: "reviewFailed"; seq: number; code: ErrorCode; message: string }
   | { type: "destinationChosen"; destination: DirectorySelection }
   | { type: "exportStarted" }
+  | { type: "exportToProjectStarted" }
   | { type: "exportDone"; result: ExportResult }
   | { type: "exportFailed"; code: ErrorCode; message: string }
   | { type: "close"; seq: number };
@@ -214,6 +215,10 @@ export function exportReducer(state: ExportState, action: ExportAction): ExportS
     case "exportStarted":
       if (!canExport(state)) return state;
       return { ...state, phase: "exporting", error: null, errorStage: null };
+    case "exportToProjectStarted":
+      // Destino definido pelo núcleo (pasta exports/ do projeto): não exige token.
+      if (!reviewReady(state)) return state;
+      return { ...state, phase: "exporting", error: null, errorStage: null };
     case "exportDone":
       if (state.phase !== "exporting") return state;
       return { ...state, phase: "done", result: action.result, destination: null };
@@ -228,13 +233,17 @@ export function exportReducer(state: ExportState, action: ExportAction): ExportS
 }
 
 /** Exportar exige revisão carregada, ao menos uma ocorrência e destino escolhido. */
-export function canExport(state: ExportState): boolean {
+/** Revisão pronta e com ocorrências, independentemente do destino. */
+export function reviewReady(state: ExportState): boolean {
   return (
     (state.phase === "review" || state.phase === "error") &&
     state.review !== null &&
-    state.review.occurrences.length > 0 &&
-    state.destination !== null
+    state.review.occurrences.length > 0
   );
+}
+
+export function canExport(state: ExportState): boolean {
+  return reviewReady(state) && state.destination !== null;
 }
 
 // --- Apresentação ------------------------------------------------------------------

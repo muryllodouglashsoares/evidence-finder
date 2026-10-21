@@ -81,6 +81,7 @@ pub fn run() {
             commands::open_document_source,
             commands::prepare_export_review,
             commands::export_evidence,
+            commands::export_evidence_to_project,
         ])
         .run(tauri::generate_context!())
         .expect("falha ao iniciar o Evidence Finder");

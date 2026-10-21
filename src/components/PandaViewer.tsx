@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { BrandMark } from "./BrandMark";
 import { PandaDirector, REST_CLIP, type PandaActivity, type PandaCommand } from "../lib/pandaCycle";
 
 interface PandaViewerProps {
@@ -99,7 +100,7 @@ export function PandaViewer({ size, className = "", activity = "idle" }: PandaVi
     dirLight.position.set(2, 4, 3);
     scene.add(dirLight);
 
-    const rimLight = new THREE.DirectionalLight(0x38bdf8, 1.1);
+    const rimLight = new THREE.DirectionalLight(0xf5b942, 0.9);
     rimLight.position.set(-3, 2, -2);
     scene.add(rimLight);
 
@@ -285,17 +286,7 @@ export function PandaViewer({ size, className = "", activity = "idle" }: PandaVi
 
   const fixed = size !== undefined;
   const boxStyle = fixed ? { width: `${size}px`, height: `${size}px` } : undefined;
-  const placeholderSize = fixed ? Math.floor(size * 0.4) : 96;
-  const logo = (
-    <img
-      src="/logo-panda.png"
-      alt=""
-      width={placeholderSize}
-      height={placeholderSize}
-      draggable={false}
-      style={{ borderRadius: "22%" }}
-    />
-  );
+  const logo = <BrandMark size={fixed ? Math.max(24, Math.floor(size * 0.4)) : 48} />;
 
   if (hasError) {
     return (

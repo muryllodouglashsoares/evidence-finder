@@ -156,6 +156,10 @@ export const core = {
     call<ExportReview>("prepare_export_review", { projectId, selection }),
 
   /** Gera o pacote (PDF, fontes verificadas e manifesto) em uma nova pasta do destino autorizado. */
+  /** Exporta para a pasta `exports/` do próprio projeto (destino definido pelo núcleo). */
+  exportEvidenceToProject: (projectId: string, selection: ExportSelection) =>
+    call<ExportResult>("export_evidence_to_project", { projectId, selection }),
+
   exportEvidence: (projectId: string, selection: ExportSelection, destinationToken: string) =>
     call<ExportResult>("export_evidence", { projectId, selection, destinationToken }),
 

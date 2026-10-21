@@ -27,7 +27,7 @@ use ttf_parser::{Face, GlyphId};
 
 const REGULAR_TTF: &[u8] = include_bytes!("../assets/fonts/DejaVuSans.ttf");
 const BOLD_TTF: &[u8] = include_bytes!("../assets/fonts/DejaVuSans-Bold.ttf");
-/// Marca do Evidence Finder (panda investigador): 128×128 pixels RGB de 8 bits,
+/// Marca do Evidence Finder ("folha sob foco", mesma do aplicativo): 128×128 pixels RGB de 8 bits,
 /// já compostos sobre branco, sem decodificador em tempo de execução.
 const LOGO_RGB: &[u8] = include_bytes!("../assets/logo-report-128.rgb");
 const LOGO_PX: u32 = 128;
@@ -46,25 +46,25 @@ const BOX_PAD_X: f32 = 10.0;
 const BAR_W: f32 = 2.5;
 
 type Color = (f32, f32, f32);
-const INK: Color = (0.10, 0.10, 0.12);
-const MUTED: Color = (0.40, 0.42, 0.46);
-const QUOTE_BG: Color = (0.955, 0.955, 0.945);
-const QUOTE_BAR: Color = (0.25, 0.25, 0.28);
-const SYS_BG: Color = (0.925, 0.945, 0.985);
-const SYS_BAR: Color = (0.17, 0.34, 0.70);
-const WARN_BG: Color = (1.0, 0.95, 0.82);
-const WARN_BAR: Color = (0.80, 0.50, 0.05);
-const RULE: Color = (0.78, 0.80, 0.84);
+const INK: Color = (0.094, 0.129, 0.122);
+const MUTED: Color = (0.306, 0.357, 0.341);
+const QUOTE_BG: Color = (1.0, 0.996, 0.980);
+const QUOTE_BAR: Color = (0.557, 0.600, 0.584);
+const SYS_BG: Color = (0.886, 0.925, 0.914);
+const SYS_BAR: Color = (0.086, 0.310, 0.318);
+const WARN_BG: Color = (0.961, 0.918, 0.820);
+const WARN_BAR: Color = (0.682, 0.482, 0.173);
+const RULE: Color = (0.796, 0.820, 0.804);
 /// Contexto vizinho (trechos antes/depois): mais discreto que o trecho encontrado.
-const CTX_BG: Color = (0.982, 0.984, 0.988);
-const CTX_BAR: Color = (0.62, 0.66, 0.72);
-const BRAND: Color = (0.012, 0.412, 0.631);
+const CTX_BG: Color = (0.945, 0.937, 0.914);
+const CTX_BAR: Color = (0.557, 0.600, 0.584);
+const BRAND: Color = (0.086, 0.310, 0.318);
 /// Máximo de caracteres de cada trecho de contexto reproduzido no relatório.
 pub const MAX_CONTEXT_CHARS: usize = 500;
 /// Amarelo do destaque (fundo) e da borda. O fundo é desenhado ATRÁS do texto
 /// (trechos) ou com mistura "Multiply" (imagens): o texto original continua legível.
-const YELLOW: Color = (1.0, 0.90, 0.20);
-const YELLOW_EDGE: Color = (0.80, 0.60, 0.0);
+const YELLOW: Color = (0.961, 0.918, 0.820);
+const YELLOW_EDGE: Color = (0.682, 0.482, 0.173);
 
 // Bloco de evidência visual: imagem à esquerda, descrição à direita.
 const COL_GAP: f32 = 16.0;
