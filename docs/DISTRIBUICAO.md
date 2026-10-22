@@ -35,6 +35,23 @@ PDFium (opcional, para evidência visual de PDFs com texto digital): baixe `pdfi
 Saída: `dist\EvidenceFinder-<versão>-<variante>-setup.exe` e o `.sha256`. `-SoPreparar` apenas monta a
 pasta `dist-staging\` para inspeção, sem compilar.
 
+## Gerar o instalador pelo GitHub (sem instalar nada no seu computador)
+
+O workflow `.github/workflows/build-windows.yml` roda `scripts/preparar-distribuicao.ps1` em uma máquina
+Windows do GitHub Actions, que já instala o Tesseract (com `por.traineddata`) e baixa o PDFium. Duas formas
+de usar:
+
+- **Release automática:** `git tag v0.1.0` e `git push origin v0.1.0`. O `.exe` e o `.sha256` aparecem em
+  **Releases**, prontos para baixar.
+- **Manual:** aba **Actions** > **Gerar instalador Windows (.exe)** > **Run workflow**. Escolha a variante
+  (`completo`, `enxuto` ou `sem-motor`). Preenchendo `release_tag`, também publica uma Release; em branco, o
+  instalador fica como artefato da execução (baixado em um `.zip`, exige login no GitHub).
+
+A variante **completa** baixa o modelo (~470 MB) durante a execução e leva mais tempo. O PDFium vem da última
+versão publicada em `bblanchon/pdfium-binaries`; se a compilação quebrar após uma atualização dele, fixe uma
+versão específica no workflow. O instalador gerado continua **sem assinatura** e **sem teste em Windows real**
+(ver a lista de verificações pendentes abaixo).
+
 ## O que o instalador coloca no computador
 
 Na pasta de instalação (ao lado do executável):
