@@ -1,0 +1,142 @@
+name: Gerar instalador Windows (.exe)
+
+# Como usar:
+#   1) Release automática: crie e envie uma tag, por exemplo
+#        git tag v0.1.0
+#        git push origin v0.1.0
+#      O instalador aparece na aba "Releases" do repositório, pronto para baixar.
+#   2) Manual: aba Actions > "Gerar instalador Windows (.exe)" > Run workflow.
+#      Escolha a variante. Se preencher "release_tag", também publica uma Release;
+#      se deixar em branco, o instalador fica só como artefato da execução.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      variante:
+        description: "Variante do instalador"
+        type: choice
+        default: completo
+        options:
+          - completo # modelo semântico + Tesseract + PDFium + WebView2 offline (maior, funciona offline)
+          - enxuto # sem o modelo semântico (o usuário instala o modelo depois)
+          - sem-motor # sem busca semântica
+      release_tag:
+        description: "Opcional: tag para publicar uma Release (ex.: v0.1.0). Em branco = só artefato"
+        type: string
+        default: ""
+
+permissions:
+  contents: write # necessário para criar a Release
+
+concurrency:
+  group: build-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows:
+    name: Instalador NSIS (Windows x64)
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      VARIANTE: ${{ github.event.inputs.variante || 'completo' }}
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v4
+
+      - name: Instalar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Instalar Rust (MSVC)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache do Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+
+      - name: Instalar dependências do front-end
+        run: npm ci
+
+      - name: Instalar o Tesseract (OCR) com o idioma português
+        run: |
+          choco install tesseract --no-progress -y
+          $dir = "C:\Program Files\Tesseract-OCR"
+          if (-not (Test-Path -LiteralPath (Join-Path $dir "tesseract.exe"))) {
+            throw "tesseract.exe não encontrado em $dir após a instalação."
+          }
+          # O instalador traz só o inglês; o app exige `por.traineddata`.
+          Invoke-WebRequest -UseBasicParsing `
+            -Uri "https://github.com/tesseract-ocr/tessdata_fast/raw/main/por.traineddata" `
+            -OutFile (Join-Path $dir "tessdata\por.traineddata")
+          "TESSERACT_DIR=$dir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Baixar o PDFium (evidência visual de PDFs)
+        run: |
+          New-Item -ItemType Directory -Force -Path pdfium-src | Out-Null
+          Invoke-WebRequest -UseBasicParsing `
+            -Uri "https://github.com/bblanchon/pdfium-binaries/releases/latest/download/pdfium-win-x64.tgz" `
+            -OutFile pdfium.tgz
+          tar -xzf pdfium.tgz -C pdfium-src
+          if (-not (Test-Path -LiteralPath "pdfium-src\bin\pdfium.dll")) {
+            throw "bin\pdfium.dll não encontrado no pacote do PDFium."
+          }
+
+      - name: Gerar o instalador (${{ env.VARIANTE }})
+        run: |
+          $params = @{
+            TesseractDir = $env:TESSERACT_DIR
+            PdfiumDir    = (Join-Path $PWD "pdfium-src")
+          }
+          switch ($env:VARIANTE) {
+            "completo"  { $params["Completo"] = $true }
+            "sem-motor" { $params["SemMotorSemantico"] = $true }
+          }
+          & "./scripts/preparar-distribuicao.ps1" @params
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Conferir os arquivos gerados
+        run: |
+          $arquivos = Get-ChildItem -Path dist -Filter "EvidenceFinder-*-setup.exe*" -File
+          if (-not $arquivos) { throw "Nenhum instalador encontrado em dist\." }
+          $arquivos | ForEach-Object { "{0}  ({1:N0} MB)" -f $_.Name, ($_.Length / 1MB) }
+
+      - name: Guardar o instalador como artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: EvidenceFinder-${{ env.VARIANTE }}-windows
+          path: |
+            dist/EvidenceFinder-*-setup.exe
+            dist/EvidenceFinder-*-setup.exe.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - name: Publicar a Release com o .exe para download
+        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.release_tag != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.release_tag || github.ref_name }}
+          name: Evidence Finder ${{ github.event.inputs.release_tag || github.ref_name }}
+          files: |
+            dist/EvidenceFinder-*-setup.exe
+            dist/EvidenceFinder-*-setup.exe.sha256
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          body: |
+            Instalador do Evidence Finder para Windows 10 (1809+) ou 11, 64 bits.
+
+            **Como instalar:** baixe o arquivo `...-setup.exe` e execute-o.
+
+            O instalador **não é assinado digitalmente**, então o Windows SmartScreen pode
+            exibir um aviso. Para conferir a integridade, compare o SHA-256 do arquivo com o
+            conteúdo do arquivo `.sha256` publicado junto.
