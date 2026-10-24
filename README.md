@@ -7,6 +7,7 @@ Aplicação desktop para **pesquisar em evidências digitais** (capturas de tela
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
 ![Rust](https://img.shields.io/badge/Rust-n%C3%BAcleo-000000?logo=rust&logoColor=white)
 ![SQLite](https://img.shields.io/badge/SQLite-local-003B57?logo=sqlite&logoColor=white)
+![Licença MIT](https://img.shields.io/badge/licen%C3%A7a-MIT-green)
 
 ![Tela inicial do Evidence Finder](docs/screenshots/Dashboard.png)
 
@@ -223,4 +224,13 @@ docs/            documentação técnica e screenshots
 
 ## Licença
 
-O repositório **não declara uma licença** para o código do aplicativo. As dependências e componentes de terceiros têm licenças próprias (por exemplo, a fonte DejaVu em [`src-tauri/assets/fonts/LICENSE-DejaVu.txt`](src-tauri/assets/fonts/LICENSE-DejaVu.txt)); veja [`docs/DISTRIBUICAO.md`](docs/DISTRIBUICAO.md).
+O código do Evidence Finder é distribuído sob a **licença MIT**; o texto completo está em [`LICENSE`](LICENSE). Ela permite usar, copiar, modificar e redistribuir o software, desde que o aviso de direitos autorais e o texto da licença sejam mantidos, e o fornece **sem garantia de qualquer tipo**.
+
+A licença MIT cobre o código deste repositório. **Componentes de terceiros mantêm as próprias licenças** e não são relicenciados por ela:
+
+- dependências Rust e JavaScript (veja `Cargo.lock` e `package-lock.json`);
+- a fonte DejaVu usada no relatório ([`src-tauri/assets/fonts/LICENSE-DejaVu.txt`](src-tauri/assets/fonts/LICENSE-DejaVu.txt));
+- o modelo 3D decorativo (`Panda by Quaternius`), cuja licença de origem deve ser conferida antes de redistribuí-lo;
+- o Tesseract, o PDFium e o modelo semântico, que **não** fazem parte do repositório e são instalados à parte.
+
+A revisão jurídica das licenças das dependências continua pendente; veja [`docs/DISTRIBUICAO.md`](docs/DISTRIBUICAO.md).
