@@ -1,361 +1,236 @@
 # Evidence Finder
 
-Aplicação desktop para Windows, **100% local**, para pesquisar informações em capturas de tela, imagens, conversas em texto, arquivos TXT e PDFs.
+Aplicação desktop para **pesquisar em evidências digitais** (capturas de tela, imagens, PDFs, arquivos TXT e texto copiado) com **processamento local** e exportação de resultados com referência às fontes.
 
-> **Estado (Fase 7):** o núcleo foi compilado e testado em Linux (258 testes Rust e 82 do frontend passam, inclusive com a rede bloqueada). **Nada foi verificado em Windows real**, o instalador nunca foi gerado, e a busca semântica com o **modelo real** ainda não foi executada. O estado detalhado, as medições e a matriz de requisitos estão em [`docs/FASE7.md`](docs/FASE7.md); a distribuição, em [`docs/DISTRIBUICAO.md`](docs/DISTRIBUICAO.md).
+![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)
+![React 19](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
+![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
+![Rust](https://img.shields.io/badge/Rust-n%C3%BAcleo-000000?logo=rust&logoColor=white)
+![SQLite](https://img.shields.io/badge/SQLite-local-003B57?logo=sqlite&logoColor=white)
+![Licença MIT](https://img.shields.io/badge/licen%C3%A7a-MIT-green)
 
-## Objetivo
+![Tela inicial do Evidence Finder](docs/screenshots/Dashboard.png)
 
-Permitir que a pessoa reúna material em projetos locais (até ~500 arquivos por projeto, conforme hardware e tamanho dos arquivos) e, nas próximas fases, encontre nele o que procura, com trechos e referência à fonte, e (em fase futura) exporte evidências para PDFs e pastas.
+> **Estado do projeto:** versão `0.1.0`, em desenvolvimento. O núcleo foi compilado e testado em **Linux**; a validação em **Windows real**, o **instalador** e os testes de qualidade com o **modelo semântico real** ainda estão **pendentes** (veja [Estado atual e limitações](#estado-atual-e-limitações)). Ainda não há instalador publicado para download.
 
-Princípios: privacidade, rastreabilidade das fontes, confiabilidade e funcionamento offline.
+## O problema
 
-## Estado atual (Fase 7 — compilada e testada em Linux; pendente em Windows e com o modelo real)
+Quem analisa material digital (conversas, prints, PDFs, anotações) costuma ter os arquivos espalhados e precisa reencontrar uma informação **e** saber de onde ela veio. O Evidence Finder reúne os documentos em **projetos independentes**, extrai o texto, permite pesquisar e exporta os trechos escolhidos junto com as fontes e seus hashes.
 
-> **Verificado em Linux:** `npm run check` e `cargo test` (258 testes) passam, também com a rede bloqueada. **Não verificado:** Windows real, o modelo semântico real (qualidade, memória, calibração do limiar), o instalador e a leitura do PDF em um leitor real. Veja `docs/FASE7.md`.
+## Visão geral
 
-| Funcionalidade | Estado |
+- **Projetos independentes:** cada projeto tem a própria pasta, o próprio banco SQLite e o próprio índice; a pesquisa nunca mistura projetos.
+- **Importação:** imagens (PNG, JPEG), PDFs, arquivos TXT e texto copiado, em lote, com detecção de duplicatas por SHA-256.
+- **Extração de texto:** texto de PDFs e TXT, e **OCR local** (Tesseract) para imagens e PDFs digitalizados.
+- **Três modalidades de pesquisa:** exata, por significado (embeddings locais) e híbrida, com filtros, ordenação, contexto e identificação da fonte.
+- **Exportação de evidências:** relatório PDF, `manifest.json` e cópia das fontes cujo SHA-256 foi **verificado** na exportação.
+- **Sem serviços remotos:** o código não contém cliente de rede nem telemetria (verificado por testes estáticos e por testes com a rede bloqueada em Linux).
+
+Recursos que dependem de componentes externos ou ainda não foram validados em ambiente real estão sinalizados em [Estado atual e limitações](#estado-atual-e-limitações).
+
+## Screenshots
+
+### Projetos
+
+Tela inicial: criar, abrir e retomar projetos recentes. A exclusão de projeto pede confirmação e nunca apaga os arquivos originais.
+
+![Dashboard](docs/screenshots/Dashboard.png)
+
+### Pesquisa
+
+Aba **Pesquisar e Analisar** com as modalidades **Exata**, **Por significado** e **Híbrida**, o estado do índice semântico, os filtros e a ordenação.
+
+![Tela de pesquisa](docs/screenshots/Tela_Pesquisa.png)
+
+### Resultados e seleção
+
+Resultados com formato, página, linha ou região da imagem, método de extração, confiança do OCR e, na busca por significado, a similaridade. Os resultados marcados seguem para **Revisar e exportar**.
+
+![Resultados da pesquisa](docs/screenshots/Conteudo_Encontrado.png)
+
+### Documentos e fontes
+
+Aba **Documentos e Fontes**: formato, tamanho, modalidade de armazenamento (cópia no projeto ou referência), disponibilidade, estado da extração e o botão **Verificar** (confere o SHA-256).
+
+![Documentos e fontes](docs/screenshots/Fontes.png)
+
+### Relatório PDF
+
+Primeira página do relatório exportado: dados do projeto e da exportação, consulta, modalidade, modelo semântico e índice das ocorrências.
+
+![Relatório de evidências em PDF](docs/screenshots/PDF.png)
+
+> As capturas mostram o aplicativo em execução. Elas **não** substituem a validação em Windows registrada como pendente em [`docs/FASE7.md`](docs/FASE7.md).
+
+## Funcionalidades
+
+### Projetos e documentos
+
+- Criar, abrir e listar projetos recentes; exclusão segura de projeto (cópias gerenciadas e banco, nunca os originais).
+- Importar vários arquivos de uma vez (PNG, JPEG, TXT, PDF) ou **adicionar texto copiado**.
+- Duas modalidades de armazenamento: **copiar para o projeto** (com verificação de integridade) ou **apenas referenciar** o original.
+- Detecção de duplicatas por SHA-256; formato conferido pelo conteúdo, não só pela extensão.
+- Verificação de disponibilidade (movido, alterado, cópia danificada) e **Verificar** sob demanda.
+- Limites: 500 documentos por projeto, 500 MB por arquivo e 5 MB de texto colado. Os limites da extração estão em `src-tauri/src/extraction.rs`.
+
+### Extração de informações
+
+- Texto de PDFs por página (`lopdf`) e de TXT (UTF-8, UTF-16 com BOM, Windows-1252).
+- **OCR local** com Tesseract para PNG, JPEG e PDFs digitalizados, com caixas delimitadoras e confiança. **O Tesseract é uma dependência externa** e o idioma `por` é obrigatório.
+- Orientação EXIF de fotos JPEG aplicada antes do OCR e do relatório.
+- Estados de processamento, falhas por documento (sem interromper o lote) e **Tentar novamente**.
+
+### Pesquisa
+
+| Modalidade | Como funciona |
 | --- | --- |
-| Criar/abrir projeto, metadados em SQLite, projetos recentes (Fase 1) | Implementado |
-| Importar PNG, JPEG, TXT e PDF (um ou vários por vez) | Implementado |
-| Adicionar texto copiado (guardado no projeto e processado direto, sem salvar TXT) | Implementado |
-| Modalidade A: referenciar os originais | Implementado |
-| Modalidade B: copiar para a pasta do projeto, com verificação de integridade | Implementado |
-| Detecção de duplicatas (SHA-256) | Implementado |
-| Disponibilidade (arquivo movido/alterado/cópia danificada) e verificação completa sob demanda | Implementado |
-| Remover documento (nunca apaga o original) | Implementado |
-| Limite de 500 documentos por projeto (interface e núcleo) | Implementado |
-| Extração de TXT (UTF-8, BOM, UTF-16 com BOM, Windows-1252) e de texto digitado | Implementado |
-| Extração de texto de PDF, por página | Implementado |
-| OCR local (Tesseract) de PNG/JPEG e de PDFs digitalizados, com caixas e confiança | Implementado — **exige o Tesseract instalado** (ver "Extração de texto") |
-| Estado, progresso e tentativa novamente na interface | Implementado |
-| Busca lexical local (SQLite FTS5): palavras, frase exata, combinação de termos, ordenada por relevância | Implementado (Fase 4) |
-| Filtros (documento, formato, período de importação) e ordenação, aplicados no núcleo | Implementado (Fase 4) |
-| Contexto do trecho (vizinhos do mesmo documento) e abertura segura do original | Implementado (Fase 4) |
-| Seleção de resultados, revisão, relatório PDF, pasta de evidências com fontes verificadas por SHA-256 e `manifest.json` | Implementado (Fase 5; pendente de validação no Windows) |
-| Exclusão segura de projeto (cópias gerenciadas + banco; nunca os originais), com confirmação | Implementado (Fase 6) |
-| Recuperação de resíduos (`*.part`, pastas temporárias de exportação abandonadas) | Implementado (Fase 6) |
-| Tokens de pasta vinculados à finalidade, validação de identificadores no núcleo | Implementado (Fase 6) |
-| Busca semântica local (exata / por significado / híbrida), sem rede | Lógica validada por testes (gerador de teste); **modelo real não executado**, limiar não calibrado |
-| Índice semântico (migração aditiva v5, vetores por conteúdo, invalidação, indexação cancelável) | Validado por testes |
-| PDF com destaque amarelo e evidências visuais (imagem à esquerda, descrição à direita) | Validado para imagens, PDFs digitalizados com uma imagem e **PDFs com texto digital (exige PDFium)**; leitura em leitor real pendente |
-| Orientação EXIF de fotos (OCR e relatório na mesma orientação) | Validado (8 orientações + Tesseract real) |
-| Instalador Windows (completo / enxuto / sem motor), modelo e OCR empacotados | Script escrito (`scripts/preparar-distribuicao.ps1`); **nunca executado** |
+| **Exata** | SQLite FTS5: palavras, combinação de termos e frase exata entre aspas; ignora maiúsculas e acentos. Não depende do modelo semântico. |
+| **Por significado** | Embeddings locais (`multilingual-e5-small` via `candle`); só trechos acima de um limiar de similaridade **inicial e não calibrado**. |
+| **Híbrida** | Fusão (RRF) entre a lista exata e a semântica; resultados com o termo literal não são descartados por similaridade baixa. |
 
-## Como importar documentos
+Filtros por documento, formato e período de importação; ordenação por relevância ou por documento e posição; **Ver contexto** (trechos vizinhos) e **Abrir original** no aplicativo padrão do sistema. A similaridade é um indicador técnico e não confirma fatos.
 
-1. Abra ou crie um projeto e clique em **Importar arquivos…** (ou **Adicionar texto…** para colar um texto).
-2. Escolha um ou vários arquivos no diálogo do Windows. Só PNG, JPEG, TXT e PDF aparecem.
-3. Escolha como guardar e confirme:
-   - **Copiar para o projeto (recomendado):** uma cópia de cada arquivo fica em `<projeto>/files/`. O projeto continua completo se você mover ou apagar os originais. Usa mais disco.
-   - **Apenas referenciar os originais:** nada é copiado; o projeto guarda o local de cada arquivo. Se o arquivo for movido, renomeado ou alterado, o documento aparece como indisponível/alterado.
-4. Ao final, um resumo lista duplicatas ignoradas e arquivos com erro. A falha de um arquivo não interrompe os demais.
+### Exportação de evidências
 
-Detalhes do comportamento:
+1. Marque os resultados desejados (nada é exportado automaticamente).
+2. **Revisar e exportar** mostra consulta, filtros, trechos completos e os arquivos que serão copiados.
+3. A exportação cria uma pasta nova (nunca sobrescreve):
 
-- **Formato:** é conferido pelo conteúdo (assinatura PNG/JPEG, marcador `%PDF-`, texto sem bytes nulos), e a extensão precisa ser coerente com ele. Arquivos de outro tipo, vazios ou com extensão trocada são recusados. TXT em UTF-8, Windows-1252 ou UTF-16 com BOM é aceito (a decodificação é feita na extração de texto, Fase 3).
-- **Duplicatas:** documentos com o mesmo SHA-256 não são importados de novo (nem entre modalidades). Mesmo nome com conteúdo diferente é mantido. O hash identifica conteúdo idêntico; **não** prova autenticidade ou procedência.
-- **Tamanho:** até 500 MB por arquivo; texto colado até 5 MB. Arquivos são lidos em blocos (sem carregar tudo na memória).
-- **Limite:** 500 documentos por projeto. Ao atingi-lo, os arquivos excedentes são recusados.
-- **Remoção:** em "referência" só o registro é removido; em "cópia", o registro e a cópia gerenciada são excluídos. **O arquivo original nunca é apagado.**
-- **Verificar:** relê o arquivo e confere o SHA-256. Cópia diferente → "Cópia danificada"; original diferente → "Alterado após a importação". A listagem faz só uma checagem rápida (existência/tamanho/data).
-
-## Onde os dados privados ficam
-
-Tudo fica na **pasta do projeto que você escolheu** (fora do repositório Git):
-
-```
-<pasta escolhida>/<nome do projeto>/
-  evidence-finder.db      banco SQLite (metadados, hashes, caminhos)
-  files/<uuid>.<ext>      cópias gerenciadas (nome gerado; o nome original fica só no banco)
+```text
+EvidenceFinder-Exportacao-AAAAMMDD-HHMMSS/
+├── relatorio.pdf      relatório com as ocorrências, localização e hashes
+├── manifest.json      ocorrências, fontes, hash registrado × hash verificado
+└── evidencias/        cópias das fontes verificadas (arquivo_001.ext, ...)
 ```
 
-A lista de projetos recentes fica em `app-registry.db`, na pasta de dados do aplicativo. O `.gitignore` ignora bancos, exportações e arquivos temporários.
+O relatório pode incluir **evidência visual** (imagem com o trecho destacado) para imagens e PDFs digitalizados com uma imagem por página. Em PDFs com texto digital isso depende do **PDFium**; quando não é possível, o relatório mantém o texto e registra o motivo.
 
-## Tecnologias
+**Sobre o SHA-256:** ele mostra que o conteúdo é idêntico ao registrado na importação. **Não** comprova autenticidade, autoria, data de criação nem cadeia de custódia formal.
 
-- Tauri 2 (casca desktop) + `tauri-plugin-dialog` (usado só pelo lado Rust)
-- React 19 + TypeScript em modo estrito + Vite
-- Rust (núcleo): `rusqlite` (SQLite embutido), `serde`, `uuid`, `chrono`, `dunce`, `sha2` (SHA-256 local, Rust puro), `lopdf` (leitura de PDF, Rust puro, MIT), `encoding_rs` (decodificação de TXT); Fase 5: `flate2` e `ttf-parser` (geração do PDF) e as fontes DejaVu Sans (ver "Exportação de evidências")
-- Testes: Vitest (frontend) e `cargo test` (núcleo); lint com ESLint
+## Tecnologias e arquitetura
 
-Nenhum serviço pago, conta externa, telemetria ou API de IA.
+| Camada | Tecnologia | Papel |
+| --- | --- | --- |
+| Interface | React 19, TypeScript (modo estrito), Vite | Telas e componentes; `src/services/core.ts` é a única ponte com o núcleo |
+| Casca desktop | Tauri 2, `tauri-plugin-dialog` | Janela, comandos e diálogos nativos (o plugin é usado só pelo lado Rust) |
+| Núcleo | Rust | Importação, extração, pesquisa, exportação e regras de segurança |
+| Armazenamento | SQLite (`rusqlite`, FTS5) | Metadados, trechos, índice de busca e vetores; um banco por projeto |
+| OCR | Tesseract 5 (processo local) | Texto de imagens e PDFs digitalizados; **instalação separada** |
+| Leitura de PDF | `lopdf` | Texto de PDFs |
+| Evidência visual em PDF (opcional) | PDFium (`pdfium-render`, biblioteca dinâmica) | Localizar termos em PDFs com texto digital |
+| Semântica | `candle` + `tokenizers` | Embeddings locais; modelo instalado pelo usuário, nunca baixado pelo app |
+| Testes | Vitest, `cargo test`, ESLint | Frontend e núcleo |
 
-## Uso simples (sem linha de comando)
-
-1. Baixe e extraia o ZIP em uma pasta de caminho curto (ex.: `C:\EvidenceFinder`), **não** dentro do OneDrive.
-2. Dê dois cliques em **`INICIAR.bat`**.
-3. Na primeira vez, o script instala sozinho o que faltar (Node.js, Rust, Ferramentas C++, WebView2, o Tesseract OCR com o idioma português e o modelo de busca semântica, ~470 MB, conferido por SHA-256) via `winget`, compila o app e o abre. Se o Windows pedir permissão de administrador, clique em **Sim**. Leva de 10 a 30+ minutos e precisa de internet e vários GB livres.
-4. Nas próximas vezes, `INICIAR.bat` abre o app em segundos. **Depois de atualizar o código (como nesta Fase 4), use `RECOMPILAR.bat`:** o `INICIAR.bat` só abre o executável já compilado e, se ele existir, não recompila.
-
-Requer Windows 10 (1809+) ou 11 com o "Instalador de Aplicativo" (winget). Se algo falhar, a mensagem aparece na janela e o log fica em `instalacao-log.txt`. O script também instala o Tesseract (`UB-Mannheim.TesseractOCR`) e baixa `por.traineddata` para a pasta `tessdata` dele (pode pedir permissão de administrador); se isso falhar, mostra um aviso e o app abre mesmo assim, sem OCR. Os scripts ainda não foram testados em um Windows real por quem escreveu o código.
-
-## Pré-requisitos para desenvolvedores (Windows 10/11)
-
-1. [Node.js](https://nodejs.org) LTS (>= 20)
-2. [Rust](https://rustup.rs) estável (>= 1.77.2) com o toolchain MSVC
-3. Microsoft C++ Build Tools (carga "Desenvolvimento para desktop com C++")
-4. WebView2 (já vem no Windows 11; no Windows 10 instale o Evergreen Runtime)
-
-Detalhes oficiais: <https://v2.tauri.app/start/prerequisites/>
-
-## Instalação e execução
-
-```bash
-npm install            # gera package-lock.json na primeira vez; versione-o
-npm run app:dev        # abre o aplicativo desktop em desenvolvimento
+```mermaid
+flowchart LR
+    UI["React + TypeScript<br/>src/"] -->|"services/core.ts<br/>invoke"| CMD["Comandos Tauri<br/>commands.rs"]
+    CMD --> CORE["Núcleo Rust<br/>documents · extraction · search · semantic · export"]
+    CORE --> DB[("SQLite do projeto<br/>FTS5 + vetores")]
+    CORE -. "processo local" .-> OCR["Tesseract"]
+    CORE -. "biblioteca opcional" .-> PDFIUM["PDFium"]
+    CORE -. "arquivos locais" .-> MODEL["Modelo semântico"]
 ```
 
-`npm run dev` sobe apenas o frontend no navegador; nesse modo o núcleo local não existe e a interface mostra um aviso.
+A interface não envia caminhos ao núcleo: pastas e arquivos são escolhidos em diálogos nativos abertos pelo Rust e devolvidos como tokens opacos. Ela envia apenas identificadores e tokens.
 
-## Verificações e testes
+## Privacidade e segurança
 
-```bash
-npm run typecheck      # TypeScript estrito
-npm run lint           # ESLint
-npm run test           # Vitest (frontend)
-npm run test:rust      # cargo test (núcleo: criação, abertura, persistência, erros, segurança, busca)
-npm run check          # todos os anteriores
-```
+Implementado e coberto por testes:
 
-Os testes Rust (258 passam e 10 dependem de recursos externos e ficam `ignored`: Tesseract, PDFium, modelo e benchmark; ver `docs/FASE7.md`) cobrem, além da Fase 1: importação de PNG/JPEG/TXT/PDF nas duas modalidades, texto colado, lotes com falhas individuais, persistência após reabrir, duplicatas, arquivos inexistentes/sem permissão, falhas de cópia, nomes e caminhos maliciosos (banco adulterado, pasta `files` substituída por arquivo ou atalho), remoção sem tocar nos originais, limite de 500, integridade das cópias, arquivos modificados e migração v1→v2 preservando dados. Os da Fase 3 cobrem decodificação e segmentação de texto, PDF com páginas, PDF digitalizado com OCR real (JPEG, Flate cinza e 1 bit), PNG/JPEG com e sem texto, dependência de OCR ausente, arquivos corrompidos, falha individual sem interromper o lote, reprocessamento sem duplicar, detecção de arquivo alterado por hash, extrator desatualizado, persistência após reabrir, remoção em cascata, migração v2→v3 e limites. Os testes de OCR real são pulados (com aviso em stderr) se o Tesseract com idioma `por` não estiver instalado; os demais rodam sempre. Os da Fase 4 cobrem a montagem segura da consulta, busca por palavra/frase/combinação, acentos e maiúsculas, caracteres especiais e operadores, ordenação por relevância, prévia e destaque, filtros combinados, paginação, isolamento entre projetos, contexto, migração de um projeto da Fase 3 (v3→v4) sem reimportar, ausência de duplicação ao reprocessar, remoção em cascata no índice, recuperação de um índice interrompido, consistência ao reabrir e a validação da abertura da fonte (ausente, alterada, outro projeto, extensão adulterada). Os testes do front (Vitest) cobrem contratos com o núcleo (só ids/tokens, nunca caminhos), validação da consulta, filtros, descrição da origem e o redutor que descarta respostas obsoletas. Os da Fase 5 estão descritos em "Exportação de evidências".
+- **Processamento local**, sem telemetria e sem cliente de rede no código. A suíte de testes passa com a rede bloqueada em Linux.
+- Permissões do Tauri mínimas (`capabilities/default.json` sem permissões) e CSP restritiva.
+- Validação de nomes, identificadores e caminhos no núcleo; criação sem sobrescrever; gravação em arquivo temporário seguida de verificação de hash.
+- Exportação montada em pasta temporária e publicada por renomeação; falhas removem só o que a própria operação criou.
+- Os arquivos originais nunca são alterados nem apagados.
 
-## Build
+Limitações que você precisa conhecer:
 
-```bash
-npm run app:build      # gera o instalador NSIS em src-tauri/target/release/bundle/
-```
+- **O armazenamento local não é criptografado:** bancos SQLite, cópias gerenciadas, vetores e exportações ficam legíveis para quem tiver acesso à pasta do projeto. A recomendação atual é usar a criptografia de disco do sistema (por exemplo, BitLocker).
+- O funcionamento **offline foi verificado em Linux**; a verificação equivalente no **Windows** (com firewall) continua pendente.
+- Não há auditoria profissional de segurança; `cargo audit` e a revisão de licenças das dependências estão pendentes.
+- Não protege contra malware nem contra outros usuários com acesso à sua conta ou ao disco.
 
-Os ícones em `src-tauri/icons/` e `public/favicon-*.png` vêm da arte oficial do panda. Os tamanhos pequenos (16–48 px) usam uma variante recortada no panda e na lupa para manter a silhueta legível; `npm run tauri icon` sobrescreveria essa variante, então regere-os a partir de `icon-source.png` apenas se precisar trocar a arte.
+A avaliação de criptografia e a tabela de segurança completa estão em [`docs/FASE7.md`](docs/FASE7.md).
 
-## Arquitetura
+## Estado atual e limitações
 
-```
-React (src/)  ──invoke──▶  Comandos Tauri (commands.rs)
- pages/components             │  valida e autoriza
- services/core.ts (única      ▼
- ponte com o núcleo)       service.rs (regras) ─▶ db.rs (SQLite do projeto)
-                              │                  registry.rs (SQLite de recentes)
-                              └▶ paths.rs · validation.rs · authorization.rs
-```
-
-- **Frontend** (`src/`): telas, componentes e `services/core.ts`, a única camada que chama o núcleo. Contratos em `types/contracts.ts`.
-- **Núcleo Rust** (`src-tauri/src/`): `commands.rs` (superfície exposta), `service.rs` (criar/abrir), `documents.rs` (importar, listar, verificar, remover, validar a fonte a abrir), `docformat.rs` (formatos), `docstore.rs` (SQL de documentos), `extraction.rs` (pipeline e lote), `extraction_store.rs` (SQL de extração/segmentos), `txt_extract.rs`, `pdf_extract.rs`, `ocr.rs` (Tesseract), `search.rs` (consulta FTS5, filtros, prévia, contexto), `db.rs` (esquema e migrações), `registry.rs` (recentes), `validation.rs`, `paths.rs`, `authorization.rs`, `error.rs` (erros estruturados `{ code, message }`).
-- **Projeto no disco:** `<pasta escolhida>/<nome do projeto>/evidence-finder.db` e, ao copiar documentos, `files/`.
-- **Projeto aberto:** o núcleo guarda qual projeto está aberto; os comandos de documentos operam só nele e a interface nunca informa caminhos de projeto.
-- **Metadados:** o `.db` do projeto guarda id (UUID v4), nome e datas (RFC 3339 UTC). O diretório associado **não** é gravado no projeto (para que a pasta possa ser movida); ele fica na lista de recentes, no diretório de dados do aplicativo.
-- **Migrações:** v1 = metadados do projeto; v2 (Fase 2) = tabela `document` (id, projeto, nome original, formato, tamanho, caminho de origem, caminho da cópia, modalidade, data, SHA-256, disponibilidade, estado e mensagem de erro) com índice único em `sha256`. A v2 é aditiva: projetos da Fase 1 são migrados sem perder dados. `PRAGMA user_version` + `PRAGMA application_id`; novas migrações são acrescentadas ao fim de `PROJECT_MIGRATIONS`. v3 (Fase 3) = tabelas `extraction` (uma linha por documento) e `text_segment` (trechos com origem), ambas com `ON DELETE CASCADE` a partir de `document` (a conexão agora ativa `PRAGMA foreign_keys`). Também aditiva: documentos da Fase 2 não têm linha em `extraction`, o que significa "pendente". v4 (Fase 4) = índice FTS5 `text_segment_fts` (ver "Busca e análise dos resultados"), também aditiva. Projetos de versão mais nova são recusados, não alterados.
-
-## Segurança: o que existe e o que não existe
-
-Implementado:
-
-- A interface **não envia caminhos**: a pasta é escolhida no diálogo nativo (aberto pelo Rust) e o núcleo devolve um token opaco, válido só na sessão. Criar/abrir só aceitam esses tokens.
-- Nome do projeto validado no núcleo (sem separadores, `..`, caracteres proibidos, nomes reservados do Windows, controles/bidi, limite de 80 caracteres).
-- Caminhos canônicos (`dunce::canonicalize`) e checagem de que o projeto criado é filho direto da pasta autorizada, em vez de comparar apenas texto.
-- Criação com `create_dir` (falha se já existir): nunca sobrescreve; em falha, remove apenas o que a própria operação criou.
-- Abrir não modifica nem apaga nada; arquivos que não sejam um projeto íntegro são recusados sem "reparo". Atalho simbólico no lugar do `.db` é recusado.
-- Permissões Tauri mínimas (`capabilities/default.json` sem permissões; o frontend não tem acesso a plugins de arquivos, shell ou rede) e CSP restritiva.
-- Arquivos a importar são escolhidos no diálogo nativo (aberto pelo Rust) e entregues à interface como tokens de uso único; o núcleo canonicaliza o caminho e abre o arquivo uma só vez (metadados, formato, hash e cópia vêm do mesmo arquivo aberto).
-- Cópias gerenciadas: nome gerado (`<uuid>.<ext>`, sem nomes de usuário no disco), criação com `create_new` (nunca sobrescreve), gravação em `.part`, releitura e comparação do SHA-256 antes de publicar; em falha, só o que a própria operação criou é removido. A pasta `files` precisa ser uma pasta real, filha direta do projeto (atalhos são recusados).
-- Remoção: só apaga caminhos no formato exato `files/<uuid>.<ext>`; um banco adulterado não consegue apontar para arquivos fora da pasta gerenciada. Originais nunca são apagados.
-- Nomes exibidos têm controles e caracteres bidirecionais invisíveis neutralizados. Arquivos importados nunca são executados.
-- Mensagens de erro e avisos não incluem caminhos completos.
-- Busca: o texto digitado nunca é concatenado ao SQL nem vira sintaxe FTS5 (cada termo vira uma frase entre aspas passada como parâmetro; filtros também são parâmetros); a consulta tem limite de tamanho e de termos. O núcleo restringe tudo ao projeto aberto (`project_id`), e o texto extraído é exibido sempre como texto (nunca HTML).
-- Abrir o original: a interface envia só o id do documento. O núcleo busca o caminho no banco do projeto, recusa fonte ausente, alterada, danificada ou sem permissão, exige arquivo comum com extensão coerente com o formato importado (PNG/JPEG/PDF/TXT; nunca executáveis) e chama o aplicativo padrão do sistema (crate `open`, ShellExecute no Windows, sem passar por um shell). Nenhuma permissão nova do Tauri foi concedida ao frontend.
-- Sem telemetria, sem rede, sem logs de caminhos ou conteúdo.
-
-Limitações (não prometemos segurança absoluta):
-
-- **O SQLite não criptografa o conteúdo por padrão.** Nomes, caminhos, hashes e datas ficam legíveis para quem tiver acesso ao arquivo; **as cópias gerenciadas também ficam sem criptografia** na pasta do projeto. O mesmo vale para a lista de recentes (`app-registry.db`).
-- Não protege contra malware, outros usuários com acesso à sua conta do Windows ou ao disco.
-- A checagem de caminhos tem uma janela teórica entre verificar e usar (TOCTOU) se outro processo trocar pastas por links no meio da operação.
-- Dois projetos copiados com o mesmo id compartilham a mesma entrada em "recentes".
-- Se registrar o projeto em "recentes" falhar, a criação/abertura continua válida e o projeto apenas não aparece na lista.
-
-## Limitações conhecidas
-
-- **Verificado em Linux** (cargo test/clippy, typecheck, lint, Vitest, build do front e teste visual com núcleo simulado). **Não verificado em Windows:** o diálogo nativo de arquivos, caminhos reais do Windows (unidades de rede, OneDrive, caminhos longos, nomes reservados), o executável/instalador gerado e os scripts `.bat`/`.ps1`. Faça esses testes no Windows antes de confiar.
-- A importação roda em uma única operação sem barra de progresso; lotes grandes de arquivos pesados podem levar tempo (a interface mostra "Importando…").
-- A detecção de arquivo alterado em modo "referência" usa tamanho e data de modificação na listagem; só **Verificar** compara o conteúdo.
-- Arquivos que falham na importação não geram registro (são só relatados no resumo); é preciso selecioná-los de novo para tentar outra vez.
-- Atalho/junção do Windows escolhido como arquivo é resolvido para o destino real antes de importar.
-- Importações simultâneas são serializadas; se o app fechar no meio de uma cópia, pode sobrar um arquivo `*.part` em `files/`. Desde a Fase 6 ele é removido automaticamente na próxima abertura do projeto (somente se tiver mais de 10 minutos e nome no formato `<uuid>.part`).
-- Sem instalador assinado; o Windows SmartScreen pode alertar. Interface somente em português do Brasil.
-
-## Extração de texto (Fase 3)
-
-**O que faz.** Para cada documento, lê o conteúdo (conferindo o SHA-256 registrado na importação), extrai o texto e grava **segmentos** no SQLite (`text_segment`) ligados ao documento e ao projeto, com: página (PDF), linhas e posição em caracteres (TXT/texto digitado), caixa delimitadora e dimensões da imagem (OCR), confiança do OCR e método (`text`, `pdf_text`, `ocr`, `manual`). O estado por documento fica em `extraction` (pendente, processando, concluído, sem texto, falha, conteúdo alterado), com hash do conteúdo extraído, versão do extrator, motor usado, mensagem segura e datas. A migração v3 é só aditiva; projetos da Fase 2 abrem normalmente e seus documentos aparecem como "não processados". O índice FTS5 foi criado na Fase 4.
-
-**Como usar.** Na lista de documentos: **Processar pendentes** (roda em segundo plano, com progresso; falha em um documento não interrompe os outros), **Tentar novamente** por documento e **Tentar falhas novamente**. Texto adicionado com **Adicionar texto…** é processado automaticamente.
-
-**Regras.** Idempotente: reprocessar um documento inalterado, com a versão atual do extrator, não regrava nem duplica segmentos. Se o conteúdo não confere mais com o hash registrado (arquivo "referência" alterado), os resultados antigos são descartados e o documento fica "Conteúdo alterado" (a extração nunca usa um conteúdo diferente do registrado). Quando `EXTRACTOR_VERSION` (em `extraction.rs`) aumenta, os resultados antigos aparecem como "desatualizados" e são refeitos em **Processar pendentes**. Originais nunca são alterados.
-
-**Limites (explícitos, com mensagem):** TXT até 50 MB; imagem até 50 MB e 100 megapixels; PDF até 100 MB e 500 páginas; no máximo 100 páginas de PDF com OCR por documento; 180 s por imagem/página no OCR. PDFs são lidos inteiros em memória (limite de 100 MB).
-
-### OCR: dependência do Tesseract (leia antes de usar imagens e PDFs digitalizados)
-
-O OCR usa o **Tesseract 5** (Apache-2.0) como processo local, sem rede, recebendo a imagem pela entrada padrão (sem arquivos temporários). **O Tesseract não é empacotado dentro do app**; quem o instala é o script `INICIAR.bat`/`RECOMPILAR.bat` (passo extra, ver "Uso simples"), ou você manualmente. Sem ele, TXT, texto digitado e PDFs com texto selecionável funcionam; imagens e PDFs digitalizados ficam com a falha "OCR indisponível" e a explicação, e podem ser reprocessados depois com **Tentar novamente**.
-
-Como obter (Windows): instale o Tesseract (por exemplo, o instalador do projeto UB Mannheim ou `winget install UB-Mannheim.TesseractOCR`) e **marque o idioma Portuguese** (arquivo `por.traineddata` em `tessdata`). O **idioma `por` é obrigatório** (sem ele o OCR é recusado em vez de gerar texto ruim em silêncio); `eng` é usado junto se existir. O app procura o executável, nesta ordem: variável `EVIDENCE_FINDER_TESSERACT` (caminho do `tesseract.exe`), pasta `tesseract\` ao lado do executável do app (com `tessdata\` dentro, preparada para empacotamento futuro), `C:\Program Files\Tesseract-OCR`, e as pastas do `PATH`. Depois de instalar, use **Verificar novamente** no aviso da lista. Funciona sem internet. **Pendência de empacotamento:** incluir o Tesseract e `por.traineddata` no instalador (`bundle.resources`) e testá-lo em um Windows real.
-
-### Limitações conhecidas da Fase 3
-
-- **PDF digitalizado:** o OCR usa a imagem embutida em cada página. Suportados: JPEG (DCT) e imagens Flate/LZW em cinza ou RGB de 8 bits, e cinza de 1 bit. **Não suportados** (falha explícita, sem OCR simulado): CCITT, JBIG2 e JPEG 2000 (comuns em digitalizações em preto e branco), paleta indexada, CMYK, imagens dentro de formulários aninhados e páginas cujo texto foi convertido em desenho vetorial. Páginas com mais de uma imagem relevante são lidas, mas sem caixa delimitadora.
-- PDFs protegidos por senha são recusados com mensagem; o texto de PDFs com fontes incomuns pode sair incompleto (a leitura de PDF é em Rust puro; PDFs problemáticos são isolados e falham sem derrubar o app). Texto de PDF não guarda linha/posição (somente página).
-- A rotação EXIF de fotos JPEG agora é aplicada (Fase 7); a qualidade depende de resolução e legibilidade (a confiança fica registrada; média abaixo de 60% gera aviso).
-- O progresso é por documento (não por página). Não há botão de cancelar o lote.
-- O conteúdo extraído fica **sem criptografia** no SQLite do projeto (como o resto dos dados). Proteja a pasta do projeto (por exemplo com BitLocker).
-- Não testado em Windows (ver "Limitações conhecidas"); os testes de OCR real rodaram em Linux com Tesseract 5.3.4.
-
-## Busca e análise dos resultados (Fase 4)
-
-**Como usar.** Na aba **Pesquisar** do projeto aberto, digite a consulta e pressione **Pesquisar**. Cada resultado mostra o documento, formato, página/linhas/região da imagem (só o que existe), o método de extração, a confiança do OCR (quando houver) e um trecho com os termos destacados. **Ver contexto** abre o trecho completo com os vizinhos do mesmo documento; **Abrir original** abre o arquivo no aplicativo padrão. Filtros e ordenação reaplicam a consulta; **Remover filtros** e **Limpar tudo** voltam ao estado inicial. Resultados em lotes de 50 (**Mostrar mais resultados**).
-
-**Consultas:**
-
-| Digite | Significa |
+| Situação | Itens |
 | --- | --- |
-| `pagamento` | trechos com a palavra |
-| `promessa pagamento` | trechos com **todas** as palavras (E), em qualquer ordem e posição |
-| `"próxima sexta-feira"` | expressão exata: palavras adjacentes, nesta ordem |
+| **Implementado e testado em Linux** | Projetos, importação, extração, OCR (Tesseract real), pesquisa exata, lógica do índice semântico (com gerador de teste), exportação PDF e manifesto, orientação EXIF, PDFium real, execução com rede bloqueada |
+| **Implementado, não validado em ambiente real** | Fluxo completo em Windows, `pdfium.dll` no Windows, diálogos nativos, scripts `.bat` e `.ps1` |
+| **Pendente** | Testes `real_model_*` com o modelo real e **calibração do limiar** de similaridade; geração e teste do **instalador Windows**; conferência do **PDF em leitor real**; medição de memória e desempenho em Windows e em `release`; **criptografia do armazenamento**; `cargo audit` e revisão de licenças |
+| **Sem suporte hoje** | Evidência visual em PDF digitalizado com várias imagens por página; busca por prefixo, sinônimos ou erros de digitação na modalidade exata; interface em outro idioma além do português do Brasil |
 
-Maiúsculas, minúsculas e acentos são ignorados (`transferencia` encontra `transferência`). A busca é por **palavra inteira** e **não há operadores**: `OR`, `NOT`, `*`, `:`, parênteses etc. são tratados como texto comum. Limites: 200 caracteres e 16 termos. Consulta vazia ou com aspas sem fechar gera uma mensagem de erro de uso (sem afetar os dados).
+O extrator de PDF (`lopdf`) pode juntar linhas em alguns PDFs, o que pode impedir a busca por certas palavras (item 6 das falhas em [`docs/FASE7.md`](docs/FASE7.md)).
 
-**Relevância.** A ordem padrão usa o BM25 do FTS5 (menos diluído em trechos curtos e com mais ocorrências sobe); empates são desfeitos de forma determinística por nome do documento e posição. A interface mostra apenas a posição (`#n`), **não** uma pontuação ou porcentagem. A outra ordenação é "Documento e posição".
+A matriz completa de requisitos, as medições e os resultados executados estão em [`docs/FASE7.md`](docs/FASE7.md).
 
-**Filtros (executados no SQLite):** documentos específicos, formato (PDF, PNG, JPEG, TXT) e **período de importação** (data em que o arquivo entrou no projeto; o app não tem a data de criação do conteúdo e por isso não oferece filtro por ela). Os filtros se combinam (E). O app não guarda horário de mensagens; nenhum horário é inventado.
+## Instalação
 
-**Índice.** A migração v4 cria a tabela virtual `text_segment_fts` (FTS5, conteúdo externo ligado a `text_segment`, tokenizador `unicode61 remove_diacritics 2`) e três gatilhos (inserção, exclusão, atualização) que a mantêm sincronizada em qualquer gravação: nova extração, reprocessamento (substitui os segmentos sem duplicar), remoção de documento (cascata) e invalidação por arquivo alterado. **Projetos antigos:** a própria migração (uma transação) indexa os segmentos já existentes ao abrir o projeto, sem reimportar nem refazer OCR; se for interrompida, é desfeita e repetida na próxima abertura. Além disso, cada busca compara o número de segmentos com o do índice e **reconstroem o índice a partir do texto guardado** se divergirem (recuperação automática, sem OCR). Pesquisar nunca reprocessa documentos.
+### Para usuários
 
-**Documentos indisponíveis.** Continuam pesquisáveis (o texto está no banco), com o aviso de disponibilidade no resultado; **Abrir original** fica desativado e o núcleo recusa fontes ausentes, alteradas ou danificadas. Documentos ainda não processados ou com falha **não** aparecem nos resultados; a aba avisa quantos são.
+**Ainda não existe instalador validado nem Release publicada.** O repositório contém o script de empacotamento (`scripts/preparar-distribuicao.ps1`) e um workflow do GitHub Actions (`.github/workflows/build-windows.yml`), mas, segundo a documentação, o script e o instalador **nunca foram executados e testados em Windows**. Variantes, conteúdo, requisitos e a lista de verificações pendentes: [`docs/DISTRIBUICAO.md`](docs/DISTRIBUICAO.md).
 
-**Limitações da Fase 4:** sem busca por prefixo/radical, sinônimos, erros de digitação ou significado (a busca semântica é de fase futura); texto de OCR com erros pode não casar com a consulta (confira a confiança e o original); a busca é feita sobre trechos de até ~1200 caracteres, então termos separados por mais de um trecho não se combinam; sem exportação das evidências; abrir o original depende de haver um aplicativo padrão para o tipo de arquivo; **a interface e a abertura de arquivos no Windows não foram testadas em um Windows real** (testes executados em Linux).
+Alternativa atual, **para quem aceita um fluxo ainda não validado por completo**: em Windows 10 (1809+) ou 11 com `winget`, extraia o projeto em uma pasta de caminho curto (fora do OneDrive) e execute `INICIAR.bat`. O script instala o que faltar (Node.js, Rust, Ferramentas C++, WebView2, Tesseract com o idioma português e o modelo semântico, cerca de 470 MB), compila o aplicativo e o abre, o que pode levar de 10 a 30 minutos ou mais. Depois de atualizar o código, use `RECOMPILAR.bat`. Em caso de erro, consulte `instalacao-log.txt`.
 
-## Exportação de evidências (Fase 5)
+### Para desenvolvedores
 
-### Como usar
+Pré-requisitos:
 
-1. Em **Pesquisar**, faça a busca e marque a caixa de cada resultado que deseja exportar (ou use **Selecionar os N exibidos**). A barra acima da lista mostra quantos estão selecionados e permite **Limpar seleção**. Nada é exportado automaticamente: só o que foi marcado.
-2. **Revisar e exportar** abre a revisão, montada pelo núcleo: consulta e filtros, documentos de origem, **trechos completos** com suas referências (página, linhas, posição, região, método de extração, confiança do OCR quando existe) e os arquivos que serão copiados, com o nome que terão em `evidencias/`. Fontes que já aparecem como ausentes/alteradas ficam destacadas.
-3. **Escolher pasta de destino** abre o diálogo nativo (controlado pelo Rust). **Exportar** cria, dentro dela, uma pasta nova `EvidenceFinder-Exportacao-AAAAMMDD-HHMMSS` (se o nome já existir, acrescenta `-2`, `-3`…; nunca sobrescreve).
+- [Node.js](https://nodejs.org) LTS (>= 20)
+- [Rust](https://rustup.rs) estável recente (a árvore foi compilada com 1.91.1; o `rust-version = "1.77.2"` do `Cargo.toml` não foi verificado)
+- Windows: Ferramentas C++ ("Desenvolvimento para desktop com C++") e WebView2. Outros sistemas: veja os [pré-requisitos do Tauri](https://v2.tauri.app/start/prerequisites/)
+- Opcionais: Tesseract 5 com `por.traineddata` (OCR) e PDFium (evidência visual de PDFs digitais)
 
-**Seleção e pesquisa.** A seleção pertence a uma pesquisa (consulta + filtros + estado dos documentos). Se qualquer um deles mudar, a seleção é descartada e a tela avisa quantos itens foram descartados; alterar só a ordenação preserva a seleção. O núcleo confere de novo: cada trecho precisa existir no projeto aberto **e** ainda corresponder à consulta e aos filtros enviados; caso contrário a exportação é recusada. Limite: 500 ocorrências por exportação.
-
-### Estrutura do pacote
-
-```
-EvidenceFinder-Exportacao-20261014-112037/
-├── relatorio.pdf
-├── manifest.json
-└── evidencias/
-    ├── arquivo_001.txt
-    ├── arquivo_002.pdf
-    └── arquivo_003.png
+```bash
+npm install
+npm run app:dev      # aplicativo desktop (Tauri) em modo de desenvolvimento
+npm run app:build    # build de produção (instalador NSIS em src-tauri/target/release/bundle/)
 ```
 
-- Um arquivo de origem é copiado **uma única vez**, mesmo com várias ocorrências; cada ocorrência continua identificada no PDF (`Ocorrência 001`, `002`…) e no manifesto (`occurrenceId`, `segmentId`). Os nomes em `evidencias/` são gerados pelo sistema (`arquivo_NNN` + extensão do formato), nunca a partir do nome original (que fica no manifesto), então não há colisão nem travessia de diretório.
-- **`relatorio.pdf`** (A4, numeração "Página i de N"): capa com projeto, ID da exportação, data/hora local, consulta, filtros e contagens; uma seção por ocorrência com documento, arquivo exportado, SHA-256, localização, método e motor de extração. Caixas **azuis** = metadados produzidos pelo sistema; caixas **cinzas** = texto extraído da fonte, literal; caixas **âmbar** = avisos (fonte não incluída, caracteres sem glifo). Acentos e Unicode usam fontes embutidas; textos longos são quebrados por largura real (palavras gigantes por caractere) e continuam entre páginas, sem corte.
-- **`manifest.json`** (UTF-8, `schemaVersion` 1): projeto, consulta, filtros, `exportId`, datas (UTC e local), referência ao relatório (nome, SHA-256, tamanho), `occurrences[]` (segmento, documento, nome original, arquivo exportado, hash da fonte **verificado**, localização, método, motor, confiança de OCR, tamanho e SHA-256 do texto), `files[]` (hash registrado × hash verificado, estado, ocorrências) e `statements[]`. Não inclui o texto integral, caminhos absolutos nem dados do ambiente.
+`npm run dev` inicia **somente o frontend no navegador**. Nesse modo o núcleo Rust não existe e a interface mostra um aviso; use `npm run app:dev` para o aplicativo completo.
 
-### Hashes: o que significam e o que não significam
+#### OCR e modelo semântico
 
-Ao exportar, cada fonte é lida **uma vez** (somente leitura): os mesmos bytes que são gravados em `evidencias/` alimentam o SHA-256, que é comparado com o hash e o tamanho registrados na importação. Só se conferir o arquivo é incluído e o hash aparece como "verificado". O hash mostra que **aquele conteúdo** é idêntico ao que foi importado; **não comprova autenticidade, autoria, data de criação nem cadeia de custódia formal**. Correspondência textual e OCR também não confirmam fatos. Relatório e manifesto dizem isso e **registram a operação realizada**, nada além.
+O Tesseract e o modelo **não vêm no repositório** e o aplicativo nunca baixa nada. Sem o Tesseract, TXT, texto colado e PDFs com texto continuam funcionando; imagens e PDFs digitalizados informam "OCR indisponível". Sem o modelo, a busca exata funciona normalmente. Para instalar o modelo em desenvolvimento, use `scripts/instalar-modelo.ps1` (veja [`docs/FASE7.md`](docs/FASE7.md)).
 
-### Avisos para fontes indisponíveis ou alteradas
+## Testes e qualidade
 
-- **Ausente, movida ou apagada** · **conteúdo alterado desde a importação** (referência) · **cópia do projeto danificada** · **sem permissão/falha de leitura**: o arquivo **não** é copiado nem apresentado como fonte válida. A ocorrência continua no relatório e no manifesto com o estado (`missing`, `modified`, `corrupted`, `inaccessible`), hash apenas "registrado, NÃO verificado" e um aviso; ao terminar, a tela lista os itens afetados.
-- Se **nenhuma** fonte puder ser incluída, a exportação falha e nada é publicado.
-- Caracteres sem glifo na fonte do relatório (por exemplo, japonês) são desenhados como "�" com aviso na ocorrência; o texto original permanece no projeto.
+```bash
+npm run typecheck    # TypeScript estrito
+npm run lint         # ESLint
+npm run test         # Vitest (frontend)
+npm run test:rust    # cargo test (núcleo)
+npm run check        # todos os anteriores
+```
 
-### Segurança e confiabilidade
+Resultado registrado em [`docs/FASE7.md`](docs/FASE7.md) (Linux, Ubuntu 24.04, Rust 1.91.1, Tesseract em português, rede bloqueada): **82 testes do frontend** e **258 testes Rust** passam, sem falhas. **10 testes Rust ficam `ignored`** por dependerem de recursos externos (Tesseract, PDFium, modelo semântico, benchmark) e os 4 testes do **modelo semântico real não foram executados**. Esses números são o registro daquela rodada, não uma nova execução.
 
-- A interface envia só identificadores de trechos, a consulta/filtros e o **token** da pasta escolhida no diálogo nativo; nunca caminhos. Origem dos arquivos vem do banco do projeto; o destino é revalidado (canônico, existente, fora da área gerenciada `files/` do projeto).
-- O pacote é montado em uma pasta temporária (`.EvidenceFinder-temp-*`) no destino e **renomeado** para o nome final só no fim; falhas removem apenas o que a operação criou. Duas exportações simultâneas são recusadas (`BUSY`); importar/buscar continuam livres porque a exportação trabalha sobre um instantâneo lido de uma só vez.
-- Sem shell, sem rede, sem logs de conteúdo ou caminhos. Originais e cópias gerenciadas nunca são modificados.
+## Estrutura do repositório
 
-### Bibliotecas e licenças adicionadas
+```text
+src/             interface React (pages, components, hooks, services, lib)
+src-tauri/       casca Tauri e núcleo Rust (src/), testes e fontes do relatório
+scripts/         instalação e empacotamento para Windows (PowerShell)
+docs/            documentação técnica e screenshots
+.github/         workflow de geração do instalador
+```
 
-| Componente | Uso | Licença |
-|---|---|---|
-| `flate2` 1.x (backend Rust puro) | compressão dos fluxos do PDF (já era dependência transitiva do `lopdf`) | MIT OR Apache-2.0 |
-| `ttf-parser` 0.25 | mapa de caracteres e larguras da fonte | MIT OR Apache-2.0 |
-| DejaVu Sans / Sans Bold (`src-tauri/assets/fonts/`) | fonte embutida no executável e no PDF | Bitstream Vera/DejaVu (permissiva; texto em `LICENSE-DejaVu.txt`) |
+## Documentação complementar
 
-O PDF é escrito diretamente pelo módulo `pdf_report.rs`; não há serviço de conversão nem biblioteca de documentos de terceiros.
+- [`docs/FASE7.md`](docs/FASE7.md): estado real de verificação, busca semântica, evidências visuais, desempenho, segurança e matriz de requisitos.
+- [`docs/DISTRIBUICAO.md`](docs/DISTRIBUICAO.md): variantes do instalador, empacotamento, licenças e verificações pendentes em Windows.
+- [`docs/REDESIGN.md`](docs/REDESIGN.md): registro histórico do redesign da interface e do relatório (escrito antes das verificações da Fase 7).
 
-### Testes da Fase 5
+## Licença
 
-- **Rust (39 novos):** uma ocorrência; várias do mesmo documento (arquivo único); documentos diferentes e nomes iguais; validade e conteúdo do manifesto (sem texto integral nem caminhos); Unicode e trechos longos relidos do próprio PDF pelos mapas `ToUnicode`; paginação e numeração; texto hostil tratado só como dado; documento ausente, alterado (mesmo tamanho), cópia adulterada, não-arquivo e sem permissão; falha total sem publicar nada; ids inexistentes/inválidos/duplicados/de outro projeto/de documento removido; seleção que não corresponde mais à consulta ou filtros; token inválido e destinos inválidos (inexistente, arquivo, área gerenciada); pasta de destino já existente (sem sobrescrita); falhas injetadas em cada etapa (cópia, relatório, manifesto, publicação) sem sobras e sem tocar em arquivos preexistentes; originais preservados byte a byte; hash registrado = hash dos bytes exportados; revisão com texto completo; bloqueio de exportações simultâneas.
-- **Frontend (Vitest, 16 novos + 2 de contrato):** seleção/desmarcação por id de trecho, contagem, limite, escopo da pesquisa e descarte de seleção desatualizada, revisão, prevenção de exportação vazia/sem destino, carregamento/sucesso/falha/nova tentativa e chamadas aos comandos Rust (só ids e tokens).
+O código do Evidence Finder é distribuído sob a **licença MIT**; o texto completo está em [`LICENSE`](LICENSE). Ela permite usar, copiar, modificar e redistribuir o software, desde que o aviso de direitos autorais e o texto da licença sejam mantidos, e o fornece **sem garantia de qualquer tipo**.
 
-### Limitações da Fase 5
+A licença MIT cobre o código deste repositório. **Componentes de terceiros mantêm as próprias licenças** e não são relicenciados por ela:
 
-- **Não validada em Windows real:** o diálogo de pasta, caminhos do Windows (OneDrive, rede, caminhos longos) e o instalador NSIS não foram exercitados; a interface (diálogo de revisão) foi verificada por tipos, lint e testes da lógica, **sem testes de renderização de componentes** (a suíte atual não os tem) e sem uso manual. O PDF foi conferido em imagem (poppler, Linux), não em Acrobat/Edge.
-- Se o aplicativo for encerrado à força durante a exportação, pode restar a pasta `.EvidenceFinder-temp-*` no destino (incompleta, nunca com nome final; pode ser apagada). A publicação por renomeação verifica antes se o nome existe; no Linux/macOS há uma janela mínima entre verificar e renomear.
-- O relatório usa DejaVu Sans (latim, grego, cirílico e símbolos comuns); CJK, emoji e escritas não cobertas viram "�". O PDF embute as fontes completas (~750 KB).
-- Fontes de documentos exportados em modo "referência" são lidas do caminho registrado no momento da exportação; o hash é a única garantia de que são as mesmas importadas.
-- Sem pré-visualização do PDF no aplicativo e sem botão para abrir a pasta criada (o caminho é exibido).
+- dependências Rust e JavaScript (veja `Cargo.lock` e `package-lock.json`);
+- a fonte DejaVu usada no relatório ([`src-tauri/assets/fonts/LICENSE-DejaVu.txt`](src-tauri/assets/fonts/LICENSE-DejaVu.txt));
+- o modelo 3D decorativo (`Panda by Quaternius`), cuja licença de origem deve ser conferida antes de redistribuí-lo;
+- o Tesseract, o PDFium e o modelo semântico, que **não** fazem parte do repositório e são instalados à parte.
 
-## Segurança e confiabilidade (Fase 6)
-
-Esta seção diferencia o que foi **implementado**, o que foi **testado aqui (Linux)** e o que **depende de validação no Windows**. Não há auditoria profissional de segurança.
-
-### Implementado
-
-- **Auditoria** de capabilities, CSP, comandos, caminhos, temporários, banco, logs e dependências. A base das fases anteriores já era sólida (caminhos canônicos, staging de exportação, `create_new`, verificação por hash, extração isolada com `catch_unwind`); a Fase 6 fechou as lacunas abaixo sem reescrever módulos.
-- **Tokens de pasta por finalidade** (`authorization.rs`): um token emitido para "abrir projeto" não vale para "criar projeto" nem para "destino de exportação". Ao exceder 64 tokens, descarta-se só o mais antigo (antes, todos eram apagados). Tokens de arquivo seguem de uso único.
-- **Validação de identificadores no núcleo** (`validation::validate_id`): ids de projeto, documento e tokens de arquivo precisam ter o formato gerado pelo app (≤ 64 caracteres, `[A-Za-z0-9-]`); `documentIds` de extração e a consulta de contexto têm limites de quantidade/tamanho.
-- **Atalho trocado após a seleção**: o caminho escolhido já é canônico; se na importação ele virou um atalho (`symlink_metadata`), a importação é recusada em vez de segui-lo.
-- **Exclusão segura de projeto** (`service::delete_project`, comandos `preview_delete_project` e `delete_project`, botão "Excluir projeto…" nos recentes, com confirmação que informa quantos documentos e cópias gerenciadas serão removidos):
-  - O caminho vem do registro local e o projeto é revalidado pelo **id** (outro projeto na mesma pasta é recusado).
-  - Remove somente `files/<uuid>.<ext>` / `<uuid>.part` (regulares, nunca atalhos), o banco e seus auxiliares (`-journal`, `-wal`, `-shm`). A pasta `files` precisa ser real (atalho: nada é feito).
-  - **Nunca** toca nos originais apenas referenciados, nas exportações geradas nem em itens estranhos dentro da pasta do projeto; `remove_dir` (não recursivo) só apaga a pasta se ficar vazia — caso contrário a interface avisa que itens foram preservados.
-  - Ordem: cópias primeiro, banco por último. Se uma cópia não puder ser excluída (em uso/permissão), o erro é mostrado, o banco permanece, o projeto continua abrível e a exclusão pode ser repetida; nunca se declara sucesso numa exclusão parcial.
-  - Bloqueada durante extração ou exportação em andamento; o projeto aberto é fechado e o registro de recentes é atualizado somente após o sucesso.
-  - Não é exclusão forense: não elimina dados de SSD, backups, Lixeira ou arquivos de recuperação do sistema.
-- **Recuperação após encerramento inesperado:** ao abrir um projeto, `*.part` com mais de 10 minutos e nome gerado pelo app são removidos. No destino de uma exportação, pastas `.EvidenceFinder-temp-*` com mais de 6 horas **e** contendo apenas `evidencias/`, `relatorio.pdf` e `manifest.json` são removidas antes da nova exportação. Pastas com qualquer outro conteúdo, atalhos, exportações finais e arquivos do usuário nunca são removidos.
-- **Lista de recentes ilegível:** mensagem específica (os projetos não são afetados) e o arquivo `app-registry.db` é preservado; nada é apagado ou recriado automaticamente.
-- **Permissões, CSP e rede:** `capabilities/default.json` continua sem permissões; nenhuma alteração de CSP. Um teste automatizado falha se uma permissão, `unsafe-inline`/`unsafe-eval` ou origem remota for adicionada.
-- **Logs e privacidade:** o app não grava logs (sem `println!`/`log`/telemetria); mensagens de erro não incluem caminhos nem conteúdo. O banco de recentes e o do projeto continuam sem criptografia.
-
-### Já estava correto e foi mantido/testado
-
-Exportação em pasta temporária com publicação atômica por `rename` (falhas em cada etapa não deixam pasta aparentemente completa), cópias com hash verificado, extração com hash antes de processar, `quick_check` do SQLite na abertura sem "reparo", migrações aditivas, limite de 500 documentos e de tamanhos.
-
-### Como verificar o funcionamento offline
-
-1. **Testes estáticos (rodam em qualquer sistema):** `npm run test` (frontend: sem `fetch`/`XMLHttpRequest`/`WebSocket`/URLs, sem plugins `@tauri-apps/plugin-*`, `index.html` sem recursos externos) e `npm run test:rust` (nenhum código do núcleo usa `std::net`/clientes HTTP; `Cargo.toml` não declara cliente de rede nem plugin `http`/`fs`/`shell`/`updater`; capabilities vazias; CSP sem origens remotas).
-2. **Execução sem rede (Linux):** `unshare -n npm run test` e `unshare -n cargo test --manifest-path src-tauri/Cargo.toml --offline` (sem interface de rede, `curl` falha). Resultado nesta fase: **todos passaram** (Rust 181, Vitest 65). Isso cobre abrir/criar projeto, importar, extrair (inclusive OCR real quando o Tesseract está instalado), pesquisar e exportar.
-3. **No Windows:** bloqueie o app no firewall (regra de saída) ou desconecte a rede e execute o fluxo completo manualmente — **não foi feito**.
-4. `reqwest` aparece no `Cargo.lock` apenas por causa do `tauri` em alvos **Android/iOS**; `cargo tree --target x86_64-pc-windows-msvc -i reqwest` não o inclui.
-
-### Dependências e licenças
-
-- 289 pacotes Rust no alvo `windows-msvc`: a grande maioria MIT/Apache-2.0; também Unicode-3.0, BSD-3-Clause, Zlib, Unlicense, 0BSD. **MPL-2.0** (cobertura por arquivo, via `tauri`): `cssparser`, `cssparser-macros`, `dtoa-short`, `selectors`, `option-ext` — sem modificação, a obrigação é apenas manter os avisos; confirme antes de distribuir. Licenças de fontes (DejaVu) em `assets/fonts/LICENSE-DejaVu.txt`. A revisão usou os metadados declarados pelos pacotes; **não foi uma análise jurídica** nem verificou textos de licença individuais.
-- `npm audit`: 3 achados **somente em ferramentas de teste** (`vitest`/`tinypool`/`@vitest/mocker`, não fazem parte do app). A correção exige `vitest` 5 (mudança incompatível) e não foi aplicada nesta fase; o teste só executa código local do projeto. Nenhuma dependência de produção foi atualizada e os arquivos de lock não foram alterados.
-- `cargo audit` não estava instalado no ambiente: **vulnerabilidades em crates Rust não foram verificadas**.
-
-### Limitações conhecidas após a Fase 6
-
-- Verificado em **Linux**. Dependem de Windows real: diálogos nativos, junções/reparse points, arquivos em uso (a exclusão com arquivo aberto reporta erro e pode ser repetida), OneDrive/rede, instalador e fluxo offline com firewall.
-- **TOCTOU:** entre validar e abrir, outro processo com acesso à sua conta ainda pode trocar arquivos; a importação mitiga lendo tudo do mesmo arquivo aberto e comparando tamanho/data, e as cópias gerenciadas são relidas e conferidas por hash. Não há abertura por handle com `O_NOFOLLOW`/`FILE_FLAG_OPEN_REPARSE_POINT`.
-- Cópias gerenciadas sem registro (queda entre a publicação e o commit do banco) **não** são removidas automaticamente, para não apagar dados que possam ser recuperados; ficam em `files/` e são removidas junto com o projeto.
-- Uma pasta temporária de exportação abandonada só é limpa na próxima exportação para o **mesmo destino**.
-- Falhas de PDF/OCR já eram isoladas por documento (`catch_unwind` + `panic = "unwind"`); um estouro de pilha ou *abort* de uma biblioteca nativa/Tesseract (processo externo) pode, em tese, não ser recuperável. Não há teste de carga com 500 arquivos reais e nenhum número de desempenho é prometido.
-- `cargo audit`, revisão jurídica de licenças e teste de carga continuam pendentes.
-
-## Fase 7 — busca semântica local, evidências visuais e distribuição
-
-Documentação completa, com o estado real de verificação, medições, limitações e a matriz de requisitos: **[`docs/FASE7.md`](docs/FASE7.md)**. Instalador, variantes e verificações pendentes em Windows: **[`docs/DISTRIBUICAO.md`](docs/DISTRIBUICAO.md)**.
-
-Resumo: três modalidades de pesquisa (exata, por significado, híbrida) sobre embeddings locais (`multilingual-e5-small` via `candle`; o aplicativo nunca baixa nada e a busca exata funciona sem o modelo); relatório PDF com destaque amarelo e blocos "imagem à esquerda, descrição à direita", agora também para fotos com orientação EXIF e para PDFs com texto digital (com PDFium). Projetos antigos precisam reprocessar documentos de imagem para ter evidência visual (extrator versão 4).
-
-### Requisitos do sistema
-Windows 10 (1809+) ou 11, 64 bits (declarado, não testado). Modelo: ~470 MB em disco. Memória do modelo e tamanho do instalador: **não medidos**. Desenvolvimento: Node.js >= 20, Rust estável recente (compilado com 1.91.1; o `rust-version` do `Cargo.toml` não foi verificado), Ferramentas C++ e WebView2.
-
-### Pendências
-1. Executar `real_model_*` com o modelo instalado e calibrar o limiar de similaridade.
-2. Gerar e testar o instalador em um Windows limpo (lista em `docs/DISTRIBUICAO.md`).
-3. Conferir o PDF gerado em um leitor real; medir memória e desempenho em Windows e em `release`.
-4. Criptografia do armazenamento (estratégia em `docs/FASE7.md`), `cargo audit` e revisão de licenças.
+A revisão jurídica das licenças das dependências continua pendente; veja [`docs/DISTRIBUICAO.md`](docs/DISTRIBUICAO.md).
